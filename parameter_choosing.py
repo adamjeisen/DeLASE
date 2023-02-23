@@ -39,7 +39,7 @@ def fit_and_test_delase(signal, test_signal, window, p, parameter_grid, dt, comp
         iterator=iterator if track_reseeds else None, 
         message_queue=message_queue if track_reseeds else None, 
         worker_num=worker_num, 
-        full_return=True
+        full_return=True,
     )
     integrated_performance_args = integrated_performance_args | integrated_performance_kwargs
 
@@ -125,7 +125,8 @@ def parameter_search(train_signal, test_signal, parameter_grid=None, dt=1, compu
         stability_max_freq=stability_max_freq, 
         use_torch=use_torch, 
         device=device, 
-        iterator=iterator
+        iterator=iterator,
+        track_reseeds=track_reseeds
     )
 
     for window in parameter_grid.window_vals:

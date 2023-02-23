@@ -322,17 +322,20 @@ def signal_metrics(true_signal, pred_signal, metrics='all', num_lags=500, max_fr
 
 #TODO: max_freq = 100?
 def compute_integrated_performance(delase, test_signal, metrics=['autocorrel_correl', 'fft_correl', 'fft_r2'], weights='equal', num_lags=500, max_freq=500, fft_n=1000, 
-            reseed_vals=np.array([1, 5, 10, 15, 20, 30, 40, 50, 100, 150, 200, 250, 300, 400, 500, 750, 1000]), autocorrel_true=None, iterator=None, message_queue=None, worker_num=None, verbose=False, full_return=False):
+            reseed_vals=np.array([1, 5, 10, 15, 20, 30, 40, 50, 100, 150, 200, 250, 300, 400, 500, 750, 1000]), autocorrel_true=None, dims_to_analyze=None, iterator=None, message_queue=None, worker_num=None, verbose=False, full_return=False):
     if weights == 'equal':
         weights = np.ones(len(metrics)) / len(metrics)
     else:
         if len(weights) != len(metrics):
             raise ValueError('weights must have the same length as metrics!')
+
+    if dims_to_analyze is None:
+        dims_to_analyze = np.arange(test_signal.shape[1])
     
     test_signal = numpy_torch_conversion(test_signal, delase.use_torch, delase.device)
 
     if autocorrel_true is None:
-        autocorrel_true = get_autocorrel_funcs(test_signal, num_lags, use_torch=delase.use_torch, device=delase.device)
+        autocorrel_true = get_autocorrel_funcs(test_signal[delase.p:, dims_to_analyze], num_lags, use_torch=delase.use_torch, device=delase.device)
     if delase.use_torch:
         performance_curve = torch.zeros(len(reseed_vals))
     else:
@@ -347,7 +350,7 @@ def compute_integrated_performance(delase, test_signal, metrics=['autocorrel_cor
     for i, reseed in enumerate(reseed_vals):
         pred_signal = delase.predict_havok_dmd(test_signal, tail_bite=True, reseed=reseed)
 
-        metric_vals = signal_metrics(test_signal[delase.p:], pred_signal[delase.p:], metrics=metrics, num_lags=num_lags, max_freq=max_freq, fft_n=fft_n, dt=delase.dt, autocorrel_true=autocorrel_true, use_torch=delase.use_torch, device=delase.device)
+        metric_vals = signal_metrics(test_signal[delase.p:, dims_to_analyze], pred_signal[delase.p:, dims_to_analyze], metrics=metrics, num_lags=num_lags, max_freq=max_freq, fft_n=fft_n, dt=delase.dt, autocorrel_true=autocorrel_true, use_torch=delase.use_torch, device=delase.device)
         all_metric_vals.append(metric_vals)
         if delase. use_torch:
             performance_curve[i] = torch.from_numpy(np.array(list(metric_vals.values()))*weights).sum()
@@ -373,5 +376,3 @@ def compute_integrated_performance(delase, test_signal, metrics=['autocorrel_cor
         )
     else:
         return ip
-
-    
