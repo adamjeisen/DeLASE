@@ -197,7 +197,7 @@ class DeLASE:
         
         self.Js = Js
 
-    def filter_chroots(self, max_freq=None):
+    def filter_chroots(self, max_freq=None, max_unstable_freq=None):
         if self.use_torch:
             stability_params = torch.real(self.chroots)
             freqs = torch.imag(self.chroots)/(2*torch.pi)
@@ -212,11 +212,19 @@ class DeLASE:
                 filtered_inds = np.abs(freqs) <= max_freq
             stability_params = stability_params[filtered_inds]
             freqs = freqs[filtered_inds]
+        
+        if max_unstable_freq is not None:
+            if self.use_torch:
+                filtered_inds = torch.logical_or(torch.abs(freqs) <= max_unstable_freq, stability_params <= 0)
+            else:
+                filtered_inds = np.logical_or(np.abs(freqs) <= max_unstable_freq, stability_params <= 0)
+            stability_params = stability_params[filtered_inds]
+            freqs = freqs[filtered_inds]
 
         self.stability_params = stability_params
         self.stability_freqs = freqs
     
-    def get_stability(self, N_time_bins=None, max_freq=None):
+    def get_stability(self, N_time_bins=None, max_freq=None, max_unstable_freq=None):
         if self.Js is None:
             raise ValueError("Jacobians are needed for stability estimation! Run compute_jacobians first")
 
@@ -231,4 +239,4 @@ class DeLASE:
             chroots = chroots[np.argsort(np.real(chroots))[::-1]]
         self.chroots = chroots
 
-        self.filter_chroots(max_freq)
+        self.filter_chroots(max_freq, max_unstable_freq)
