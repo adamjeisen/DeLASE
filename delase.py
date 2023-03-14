@@ -4,7 +4,7 @@ import torch
 from stability_estimation import compute_DDE_chroots
 from utils import *
 
-def embed_signal(x, m, tau=1, use_torch=False, device=None):
+def embed_signal(x, m, tau=1, use_bias=False, use_torch=False, device=None):
     x = numpy_torch_conversion(x, use_torch, device)
     if use_torch:
         device = x.device
@@ -13,7 +13,7 @@ def embed_signal(x, m, tau=1, use_torch=False, device=None):
         embedding = np.zeros((x.shape[0] - (m - 1) * tau, x.shape[1]*m))
     for d in range(m):
         embedding[:, d*x.shape[1]:(d + 1)*x.shape[1]] = x[(m - 1 - d)*tau:x.shape[0] - d*tau]
-    
+
     return embedding
 
 class DeLASE:
@@ -22,6 +22,7 @@ class DeLASE:
         self.n = data.shape[1]
         self.p = p
         self.tau = tau
+        self.dt = dt
         self.use_torch = use_torch
 
         data = numpy_torch_conversion(data, use_torch, device)
@@ -45,10 +46,12 @@ class DeLASE:
             self.H = None
         
         self.r = None
+        self.scale_svd_coords = None
+        self.V_coords = None
         self.A_v = None
         self.A = None
 
-        self.dt = dt
+        
         self.Js = None
 
         self.N_time_bins = None
@@ -56,7 +59,7 @@ class DeLASE:
         self.stability_params = None
         self.stability_freqs = None
         
-    def compute_hankel(self, p=None, tau=None, verbose=False):
+    def compute_hankel(self, p=None, tau=None, use_bias=None, verbose=False):
         if verbose:
             print("Computing Hankel matrix ...")
         if p is None and self.p is None:
@@ -65,6 +68,9 @@ class DeLASE:
             self.p = p
         else: # p is None and self.p is not None
             p = self.p
+        
+        if use_bias is not None:
+            self.use_bias = use_bias
         
         if tau is None and self.tau is None:
             raise ValueError("Embedding dim p has not been provided.")
@@ -109,7 +115,7 @@ class DeLASE:
         if verbose:
             print("SVD complete!")
     
-    def compute_havok_dmd(self, r=None, r_thresh=0.25, lamb=0, rcond=1e-42, verbose=False):
+    def compute_havok_dmd(self, r=None, r_thresh=0.25, lamb=0, scale_svd_coords=False, rcond=1e-42, verbose=False):
         if self.U is None:
             raise ValueError("SVD computation has not been done! Run compute_svd before this function")
         if verbose:
@@ -123,45 +129,87 @@ class DeLASE:
                 else:
                     r = np.argmax(np.arange(len(self.S), 0, -1)*(self.S < r_thresh))
         self.r = r
+
+        self.scale_svd_coords = scale_svd_coords
         
+        if scale_svd_coords:
+            self.V_coord = ((self.S_mat @ self.V.T).T)[:, :r]
+        else:
+            self.V_coord = self.V[:, :r]
+
         if self.use_torch:
             # A = torch.linalg.lstsq(self.V[:-1, :r], self.V[1:, :r], rcond=rcond)[0].T
             # A = torch.linalg.lstsq(self.V[:-1, r].T @ self.V[:-1, :r] + lamb*torch.eye(r).to(self.device), self.V[:-1, :r].T@self.V[1:, :r], rcond=rcond)[0].T
-            A = (torch.linalg.inv(self.V[:-1, :r].T @ self.V[:-1, :r] + lamb*torch.eye(r).to(self.device))@self.V[:-1, :r].T@self.V[1:, :r]).T
+            # A = (torch.linalg.inv(self.V[:-1, :r].T @ self.V[:-1, :r] + lamb*torch.eye(r).to(self.device))@self.V[:-1, :r].T@self.V[1:, :r]).T
+
+            A = (torch.linalg.inv(self.V_coord[:-1].T @ self.V_coord[:-1] + lamb*torch.eye(r).to(self.device))@self.V_coord[:-1].T@self.V_coord[1:]).T
         else:
-            A = (np.linalg.inv(self.V[:-1, :r].T @ self.V[:-1, :r] + lamb*np.eye(r))@self.V[:-1, :r].T@self.V[1:, :r]).T
+            A = (np.linalg.inv(self.V_coord[:-1].T @ self.V_coord[:-1] + lamb*np.eye(r))@self.V_coord[:-1].T@self.V_coord[1:]).T
         self.A_v = A
 
-        self.A = self.U @ self.S_mat[:, :self.r] @ self.A_v @ self.S_mat_inv[:self.r] @ self.U.T
+        if scale_svd_coords:
+            self.A = self.U[:, :self.r] @ self.A_v @ self.U[:, :self.r].T
+        else:
+            self.A = self.U @ self.S_mat[:, :self.r] @ self.A_v @ self.S_mat_inv[:self.r] @ self.U.T
 
         if verbose:
             print("Least squares complete!")
     
-    def predict_havok_dmd(self, test_data, tail_bite=False, reseed=None, full_return=False, verbose=False):
+    def predict_havok_dmd(self, test_data, tail_bite=False, reseed=None, use_real_coords=False, full_return=False, verbose=False):
         test_data = numpy_torch_conversion(test_data, self.use_torch, self.device)
         H_test = embed_signal(test_data, self.p, self.tau, use_torch=self.use_torch, device=self.device)
-        V_test = (self.S_mat_inv[:self.r] @ self.U.T @ H_test.T).T
+        if not use_real_coords:
+            if self.scale_svd_coords:
+                V_test = (self.U[:, :self.r].T @ H_test.T).T
+            else:
+                V_test = (self.S_mat_inv[:self.r] @ self.U.T @ H_test.T).T
 
         if tail_bite:
             if reseed is None:
                 reseed = V_test.shape[0] + 1
-            if self.use_torch:
-                V_test_havok_dmd = torch.zeros(V_test.shape).to(self.device)
-            else:
-                V_test_havok_dmd = np.zeros(V_test.shape)
-            V_test_havok_dmd[0] = V_test[0]
-            for t in range(1, V_test.shape[0]):
-                if t % reseed == 0:
-                    V_test_havok_dmd[t] = self.A_v @ V_test[t - 1]
+
+            if use_real_coords:
+                if self.use_torch:
+                    H_test_havok_dmd = torch.zeros(H_test.shape).to(self.device)
                 else:
-                    V_test_havok_dmd[t] = self.A_v @ V_test_havok_dmd[t - 1]
+                    H_test_havok_dmd = np.zeros(H_test.shape)
+                H_test_havok_dmd[0] = H_test[0]
+
+                for t in range(1, H_test.shape[0]):
+                    if t % reseed == 0:
+                        H_test_havok_dmd[t] = self.A @ H_test[t - 1]
+                    else:
+                        H_test_havok_dmd[t] = self.A @ H_test_havok_dmd[t - 1]
+            else: 
+                if self.use_torch:
+                    V_test_havok_dmd = torch.zeros(V_test.shape).to(self.device)
+                else:
+                    V_test_havok_dmd = np.zeros(V_test.shape)
+                V_test_havok_dmd[0] = V_test[0]
+
+                for t in range(1, V_test.shape[0]):
+                    if t % reseed == 0:
+                        V_test_havok_dmd[t] = self.A_v @ V_test[t - 1]
+                    else:
+                        V_test_havok_dmd[t] = self.A_v @ V_test_havok_dmd[t - 1]
         else:
-            V_test_havok_dmd_ = (self.A_v @ V_test[:-1].T).T
-            if self.use_torch:
-                V_test_havok_dmd = torch.vstack([V_test[[0], :self.r], V_test_havok_dmd_])
+            if use_real_coords:
+                H_test_havok_dmd_ = (self.A @ H_test[:-1].T).T
+                if self.use_torch:
+                    H_test_havok_dmd = torch.vstack([H_test[[0], :self.r], H_test_havok_dmd_])
+                else:
+                    H_test_havok_dmd = np.vstack([H_test[[0], :self.r], H_test_havok_dmd_])
             else:
-                V_test_havok_dmd = np.vstack([V_test[[0], :self.r], V_test_havok_dmd_])
-        H_test_havok_dmd = (self.U @ self.S_mat[:, :self.r] @ V_test_havok_dmd.T).T
+                V_test_havok_dmd_ = (self.A_v @ V_test[:-1].T).T
+                if self.use_torch:
+                    V_test_havok_dmd = torch.vstack([V_test[[0], :self.r], V_test_havok_dmd_])
+                else:
+                    V_test_havok_dmd = np.vstack([V_test[[0], :self.r], V_test_havok_dmd_])
+        
+                if self.scale_svd_coords:
+                    H_test_havok_dmd = (self.U[:, :self.r] @ V_test_havok_dmd.T).T
+                else:
+                    H_test_havok_dmd = (self.U @ self.S_mat[:, :self.r] @ V_test_havok_dmd.T).T
 
         if self.use_torch:
             pred_data = torch.vstack([test_data[:self.p], H_test_havok_dmd[1:, :self.n]])
@@ -224,7 +272,7 @@ class DeLASE:
         self.stability_params = stability_params
         self.stability_freqs = freqs
     
-    def get_stability(self, N_time_bins=None, max_freq=None, max_unstable_freq=None):
+    def get_stability(self, N_time_bins=None, max_freq=None, max_unstable_freq=None, sum_vals=False):
         if self.Js is None:
             raise ValueError("Jacobians are needed for stability estimation! Run compute_jacobians first")
 
@@ -232,7 +280,7 @@ class DeLASE:
             N_time_bins = self.p
         self.N_time_bins = N_time_bins
 
-        chroots = compute_DDE_chroots(self.Js, self.dt, N=N_time_bins, use_torch=self.use_torch, device=self.device)
+        chroots = compute_DDE_chroots(self.Js, self.dt, N=N_time_bins, use_torch=self.use_torch, device=self.device, sum_vals=sum_vals)
         if self.use_torch:
             chroots = chroots[torch.argsort(torch.real(chroots)).flip(dims=(0,))]
         else:

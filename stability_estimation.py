@@ -7,7 +7,7 @@
 # Code adapted from MATLAB (and altered slightly)
 
 import numpy as np
-import numpy.matlib
+import numpy.matlib as matlib
 import torch
 
 from utils import *
@@ -30,14 +30,16 @@ def product_safe(x):
 
     return prod
 
-def elle(i, yy, xx, scale=5):
+def elle(i, yy, xx, scale=5, sum_vals=False):
     xx_trimmed = xx[np.where(xx != xx[i])[0]]
     # aa = np.product((yy - xx_trimmed)*scale)
     # bb = np.product((xx[i] - xx_trimmed)*scale)
 
     # return np.product(np.divide(yy - xx_trimmed, xx[i] - xx_trimmed))
-
-    return product_safe(np.divide(yy - xx_trimmed, xx[i] - xx_trimmed))
+    if sum_vals:
+        return np.sum(np.divide(yy - xx_trimmed, xx[i] - xx_trimmed))
+    else:
+        return product_safe(np.divide(yy - xx_trimmed, xx[i] - xx_trimmed))
 
     # if bb == 0:
     #     bb += 1e-130
@@ -50,14 +52,14 @@ def cheb(N, T):
     xx = np.cos(np.pi*np.arange(N + 1)/N)
     xx = T*(xx - 1)/2
     c = np.multiply(np.hstack([2, np.ones(N - 1), 2]), np.power(-1, np.arange(N + 1)))
-    X = np.matlib.repmat(xx, N + 1, 1).T
+    X = matlib.repmat(xx, N + 1, 1).T
     dX = X - X.T
     D = np.divide(np.outer(c, 1/c), dX + np.eye(N + 1))
     D = D - np.diag(np.sum(D.T, axis=0))
     
     return D, xx
 
-def compute_DDE_chroots(Js, dt, N=20, use_torch=False, device=None, rescale=False):
+def compute_DDE_chroots(Js, dt, N=20, use_torch=False, device=None, rescale=False, sum_vals=False):
     m = Js.shape[1] # system dimension
     
     k = Js.shape[0] # num delays
@@ -111,7 +113,7 @@ def compute_DDE_chroots(Js, dt, N=20, use_torch=False, device=None, rescale=Fals
             # G += L[:, :, l]*elle(i, - tau[l], xx)
             # faster without torch
             # G += L[l]*elle(i, -float(tau[l]), xx, use_torch=False)
-            G += L[l]*elle(i, -float(tau[l]), xx)
+            G += L[l]*elle(i, -float(tau[l]), xx, sum_vals=sum_vals)
         
         # G_norm.append(np.linalg.norm(G))
 

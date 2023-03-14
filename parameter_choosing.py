@@ -38,7 +38,7 @@ def compute_delase_chroots(delase, stability_max_freq=500, stability_max_unstabl
     return result
 
 def fit_and_test_delase(signal, test_signal, window, p, parameter_grid, dt, compute_ip=True, autocorrel_true=None, integrated_performance_kwargs={},
-                        compute_chroots=True, stability_max_freq=500, stability_max_unstable_freq=None, use_torch=False, device=None, track_reseeds=False, iterator=None, message_queue=None, worker_num=None):
+                        compute_chroots=True, stability_max_freq=500, stability_max_unstable_freq=125, use_torch=False, device=None, track_reseeds=False, iterator=None, message_queue=None, worker_num=None):
     results = []
 
     integrated_performance_args = dict(
@@ -101,7 +101,7 @@ def fit_and_test_delase(signal, test_signal, window, p, parameter_grid, dt, comp
     return results
 
 def parameter_search(train_signal, test_signal, parameter_grid=None, dt=1, compute_ip=True, integrated_performance_kwargs={},
-                        compute_chroots=True, stability_max_freq=500, use_torch=False, device=None, verbose=False, track_reseeds=True):
+                        compute_chroots=True, stability_max_freq=500, stability_max_unstable_freq=125, use_torch=False, device=None, verbose=False, track_reseeds=True):
     if parameter_grid is None:
         parameter_grid = ParameterGrid()
     
@@ -131,6 +131,7 @@ def parameter_search(train_signal, test_signal, parameter_grid=None, dt=1, compu
         integrated_performance_kwargs=integrated_performance_kwargs, 
         compute_chroots=compute_chroots, 
         stability_max_freq=stability_max_freq, 
+        stability_max_unstable_freq=stability_max_unstable_freq,
         use_torch=use_torch, 
         device=device, 
         iterator=iterator,

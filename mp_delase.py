@@ -22,13 +22,13 @@ def mp_worker(worker_num, task_queue, message_queue=None, use_cuda=False):
         try:
             # pull a task from the queue
             task_params = task_queue.get_nowait()
-            data_loading_args, window, expansion_val, expansion_type, autocorrel_kwargs, fit_and_test_args, T_pred, RESULTS_DIR, session, area = task_params
+            data_loading_args, window, expansion_val, expansion_type, autocorrel_kwargs, fit_and_test_args, T_pred, RESULTS_DIR, session, area, norm = task_params
             if expansion_type == 'p':
                 p = expansion_val
             else: # expansion_type == 'matrix_size'
                 matrix_size = expansion_val
             
-            results_dir = os.path.join(RESULTS_DIR, session, area)
+            results_dir = os.path.join(RESULTS_DIR, os.path.join(session, 'NORMED' if norm else 'NOT_NORMED', area))
 
             os.makedirs(results_dir, exist_ok=True)
             save_path = os.path.join(results_dir, f"{data_loading_args['window_start']}_window_{window}_{expansion_type}_{expansion_val}")
@@ -42,6 +42,8 @@ def mp_worker(worker_num, task_queue, message_queue=None, use_cuda=False):
 
                 data_loading_args['window_end'] = data_loading_args['window_start'] + (window + T_pred)*fit_and_test_args['dt']
                 signal = load_window_from_chunks(**data_loading_args)
+                if norm:
+                    signal = (signal - signal.mean())/signal.std()
 
                 os.makedirs(results_dir, exist_ok=True)
                 fit_and_test_args['message_queue'] = message_queue
@@ -91,6 +93,7 @@ if __name__ == '__main__':
                             help='Required path to the multiprocessing argument dictionary, pickled.')
     command_line_args = parser.parse_args()
 
+    print(f"Now processing: {command_line_args.path}")
     mp_args = argparse.Namespace(**pd.read_pickle(command_line_args.path))
 
     # ----------------------
@@ -149,7 +152,7 @@ if __name__ == '__main__':
         for i, row in mp_args.data_processing_df.iterrows():
             for window in mp_args.parameter_grid.window_vals:
                 for matrix_size in mp_args.parameter_grid.matrix_size_vals:
-                    task_queue.put((row[['window_start', 'window_end', 'directory', 'dimension_inds']], window, matrix_size, 'matrix_size', autocorrel_kwargs, fit_and_test_args, mp_args.T_pred, mp_args.RESULTS_DIR, row.session, row.area))
+                    task_queue.put((row[['window_start', 'window_end', 'directory', 'dimension_inds']], window, matrix_size, 'matrix_size', autocorrel_kwargs, fit_and_test_args, mp_args.T_pred, mp_args.RESULTS_DIR, row.session, row.area, mp_args.norm))
 
     num_workers = mp_args.NUM_WORKERS
     processes = []
@@ -189,3 +192,5 @@ if __name__ == '__main__':
         p.join()
     
     os.remove(command_line_args.path)
+
+    logger.debug("complete!!!!")
