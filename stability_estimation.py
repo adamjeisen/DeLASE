@@ -59,7 +59,7 @@ def cheb(N, T):
     
     return D, xx
 
-def compute_DDE_chroots(Js, dt, N=20, use_torch=False, device=None, rescale=False, sum_vals=False):
+def compute_DDE_chroots(Js, dt, N=20, use_torch=False, device=None, dtype='torch.DoubleTensor', rescale=False, sum_vals=False):
     m = Js.shape[1] # system dimension
     
     k = Js.shape[0] # num delays
@@ -75,7 +75,7 @@ def compute_DDE_chroots(Js, dt, N=20, use_torch=False, device=None, rescale=Fals
             tau = np.arange(1, Js.shape[0] + 1)/(Js.shape[0] + 1)
     
     # convert Js to appropriate data type
-    Js = numpy_torch_conversion(Js, use_torch, device)
+    Js = numpy_torch_conversion(Js, use_torch, device, dtype)
 
     L = Js
     if rescale:

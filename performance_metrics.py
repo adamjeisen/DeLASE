@@ -7,13 +7,26 @@ from tqdm.auto import tqdm
 from utils import *
 
 # ============================================================
+# AIC
+# ============================================================
+
+def compute_AIC(delase, test_signal):
+    N = (test_signal.shape[0] - delase.p)*test_signal.shape[1]
+    preds = delase.predict_havok_dmd(test_signal, use_real_coords=True)
+    if delase.use_torch:
+        preds = preds.cpu()
+    AIC = float(N*np.log(((preds[delase.p:] - test_signal[delase.p:])**2).sum()/N) + 2*(delase.A_v.shape[0]*delase.A_v.shape[1] + 1))
+
+    return AIC
+
+# ============================================================
 # METRIC FUNCTIONS
 # ============================================================
 
 # num_time_points x num_dimensions
-def pearsonr(x, y, use_torch=False, device=None):
-    x = numpy_torch_conversion(x, use_torch, device)
-    y = numpy_torch_conversion(y, use_torch, device)
+def pearsonr(x, y, use_torch=False, device=None, dtype='torch.DoubleTensor'):
+    x = numpy_torch_conversion(x, use_torch, device, dtype)
+    y = numpy_torch_conversion(y, use_torch, device, dtype)
     if len(x.shape) == 1: # y.shape should also have length 1
         if use_torch:
             x = x.unsqueeze(-1)
@@ -36,9 +49,9 @@ def pearsonr(x, y, use_torch=False, device=None):
     return num/denom
 
 # num_time_points x num_dimensions
-def r2_metric(target, preds, use_torch=False, device=None):
-    target = numpy_torch_conversion(target, use_torch, device)
-    preds = numpy_torch_conversion(preds, use_torch, device)
+def r2_metric(target, preds, use_torch=False, device=None, dtype='torch.DoubleTensor'):
+    target = numpy_torch_conversion(target, use_torch, device, dtype)
+    preds = numpy_torch_conversion(preds, use_torch, device, dtype)
     if len(target.shape) == 1: # pred.shape should also have length 1
         if use_torch:
             target = target.unsqueeze(-1)
@@ -58,30 +71,28 @@ def r2_metric(target, preds, use_torch=False, device=None):
     return r2
 
 # num_time_points x num_dimensions
-def get_autocorrel_funcs(signal_multi_dim, num_lags=500, use_torch=False, device=None, verbose=False):
-    signal_multi_dim = numpy_torch_conversion(signal_multi_dim, use_torch, device)
+def get_autocorrel_funcs(signal_multi_dim, num_lags=500, use_torch=False, device=None, dtype='torch.DoubleTensor', verbose=False):
+    signal_multi_dim = numpy_torch_conversion(signal_multi_dim, use_torch, device, dtype)
     if use_torch:
-        device = signal_multi_dim.device.type
-        autocorrel_funcs = torch.zeros(signal_multi_dim.shape[1], num_lags).to(device)
-        for lag in range(num_lags):
-            autocorrel_funcs[:, lag] = pearsonr(signal_multi_dim[lag:], signal_multi_dim[:signal_multi_dim.shape[0] - lag], use_torch=use_torch, device=device)
+        autocorrel_funcs = torch.zeros(signal_multi_dim.shape[1], num_lags).type(dtype).to(device)
     else:
         autocorrel_funcs = np.zeros((signal_multi_dim.shape[1], num_lags))
-        for lag in range(num_lags):
-            autocorrel_funcs[:, lag] = pearsonr(signal_multi_dim[lag:], signal_multi_dim[:signal_multi_dim.shape[0] - lag], use_torch=use_torch)
+    for lag in range(num_lags):
+        autocorrel_funcs[:, lag] = pearsonr(signal_multi_dim[lag:], signal_multi_dim[:signal_multi_dim.shape[0] - lag], use_torch=use_torch, device=device, dtype=dtype)
+
 
     return autocorrel_funcs
 
 # num_time_points x num_dimensions
-def correlation_matrix(mat, use_torch=False, device=None):
-    mat = numpy_torch_conversion(mat, use_torch, device)
+def correlation_matrix(mat, use_torch=False, device=None, dtype='torch.DoubleTensor'):
+    mat = numpy_torch_conversion(mat, use_torch, device, dtype)
     if use_torch:
         corrmat = torch.zeros(mat.shape[1], mat.shape[1])
     else:
         corrmat = np.zeros((mat.shape[1], mat.shape[1]))
     for i in range(mat.shape[1]):
         for j in range(i):
-            corrmat[i, j] = pearsonr(mat[:, [i]], mat[:, [j]], use_torch=use_torch, device=device)
+            corrmat[i, j] = pearsonr(mat[:, [i]], mat[:, [j]], use_torch=use_torch, device=device, dtype=dtype)
             corrmat[j, i] = corrmat[i, j]
     
     return corrmat
@@ -90,17 +101,17 @@ def correlation_matrix(mat, use_torch=False, device=None):
 # FUNCTIONS FOR COMPUTING KL DIVERGENCE (from Brenner et. al. 2022)
 # ------------------------------------------------------------
 
-def clean_from_outliers(prior, posterior, use_torch=False, device=None):
+def clean_from_outliers(prior, posterior, use_torch=False):
     nonzeros = (prior != 0)
     if any(prior == 0):
         prior = prior[nonzeros]
         posterior = posterior[nonzeros]
     if use_torch:
-        nonzeros = nonzeros.float() 
+        nonzeros = nonzeros.double() 
     outlier_ratio = (1 - nonzeros).mean()
     return prior, posterior, outlier_ratio
 
-def eval_likelihood_gmm_for_diagonal_cov(z, mu, std, use_torch=False, device=None):
+def eval_likelihood_gmm_for_diagonal_cov(z, mu, std, use_torch=False):
     T = mu.shape[0]
     mu = mu.reshape((1, T, -1))
 
@@ -125,38 +136,37 @@ def eval_likelihood_gmm_for_diagonal_cov(z, mu, std, use_torch=False, device=Non
     return likelihood
 
 ## KLX Statespace
-def calc_kl_mc(mu_inf, cov_inf, mu_gen, cov_gen, mc_n=1000, use_torch=False, device=None):
+def calc_div_mc(mu_inf, cov_inf, mu_gen, cov_gen, mc_n=1000, use_torch=False, device=None, dtype='torch.DoubleTensor'):
     if use_torch:
-        t = torch.randint(0, mu_inf.shape[0], (mc_n,)).to(device)
+        t = torch.randint(0, mu_inf.shape[0], (mc_n,)).type(dtype).to(device)
 
-        std_inf = torch.sqrt(cov_inf)
-        std_gen = torch.sqrt(cov_gen)
+        std_inf = torch.sqrt(cov_inf).type(dtype).to(device)
+        std_gen = torch.sqrt(cov_gen).type(dtype).to(device)
 
-        z_sample = (mu_inf[t] + std_inf[t] * torch.randn(mu_inf[t].shape).to(device)).reshape((mc_n, 1, -1))
+        z_sample = (mu_inf[t] + std_inf[t] * torch.randn(mu_inf[t].shape).type(dtype).to(device)).reshape((mc_n, 1, -1))
     else:
         t = np.random.randint(0, mu_inf.shape[0], (mc_n, ))
 
         std_inf = np.sqrt(cov_inf)
         std_gen = np.sqrt(cov_gen)
 
-        z_sample = (mu_inf[t] + std_inf[t] + np.random.randn(*mu_inf[t].shape)).reshape((mc_n, 1, -1))
+        z_sample = (mu_inf[t] + std_inf[t]*np.random.randn(mu_inf[t].shape)).reshape((mc_n, 1, -1))
 
-    prior = eval_likelihood_gmm_for_diagonal_cov(z_sample, mu_gen, std_gen, use_torch, device)
-    posterior = eval_likelihood_gmm_for_diagonal_cov(z_sample, mu_inf, std_inf, use_torch, device)
-    prior, posterior, outlier_ratio = clean_from_outliers(prior, posterior, use_torch, device)
+    prior = eval_likelihood_gmm_for_diagonal_cov(z_sample, mu_gen, std_gen, use_torch)
+    posterior = eval_likelihood_gmm_for_diagonal_cov(z_sample, mu_inf, std_inf, use_torch)
+    prior, posterior, outlier_ratio = clean_from_outliers(prior, posterior, use_torch)
+
     if use_torch:
-        kl_mc = torch.mean(torch.log(posterior) - torch.log(prior), dim=0)
+        div_mc = torch.mean(torch.log(posterior) - torch.log(prior), dim=0)
     else:
-        kl_mc = np.mean(np.log(posterior) - np.log(prior), axis=0)
-    return kl_mc, outlier_ratio
+        div_mc = np.mean(np.log(posterior) - np.log(prior), axis=0)
+    return div_mc, outlier_ratio
 
 #TODO: not sure if numpy is working, just set use_torch=True
-def calc_kl_from_data(data_true, data_pred, num_samples=1, mc_n=1000, use_torch=True, device=None):
+def calc_div_from_data(data_true, data_pred, num_samples=1, mc_n=1000, symmetric=False, use_torch=True, device=None, dtype='torch.DoubleTensor'):
     mu_gen = data_pred
-    data_true = numpy_torch_conversion(data_true, use_torch, device)
-    mu_gen = numpy_torch_conversion(mu_gen, use_torch, device)
-    if use_torch:
-        device = data_true.device
+    data_true = numpy_torch_conversion(data_true, use_torch, device, dtype)
+    mu_gen = numpy_torch_conversion(mu_gen, use_torch, device, dtype)
     
     time_steps = min(len(data_true), 10000)
     mu_inf= data_true[:time_steps]
@@ -165,21 +175,27 @@ def calc_kl_from_data(data_true, data_pred, num_samples=1, mc_n=1000, use_torch=
 
     scaling = 1.
     if use_torch:
-        cov_inf = torch.ones(data_true.shape[-1]).repeat(time_steps, 1).to(device)*scaling
-        cov_gen = torch.ones(data_true.shape[-1]).repeat(time_steps, 1).to(device)*scaling
+        cov_inf = torch.ones(data_true.shape[-1]).repeat(time_steps, 1).type(dtype).to(device)*scaling
+        cov_gen = torch.ones(data_true.shape[-1]).repeat(time_steps, 1).type(dtype).to(device)*scaling
+        # cov_inf = torch.cov(data_true.T)
+        # cov_gen = torch.cov(mu_gen.T)
     else:
         cov_inf = np.ones((time_steps, data_true.shape[-1]))
         cov_gen = np.ones((time_steps, data_true.shape[-1]))
-    kl_mc = 0
+        # cov_inf = np.cov(data_true.T)
+        # cov_gen = np.cov(mu_gen.T)
+    
+    div_mc = 0
+    mu_PQ = (mu_gen + mu_inf)/2
+    cov_PQ = (cov_gen + cov_inf)/2
     for num_sample in range(num_samples):
-        kl_mc1, _ = calc_kl_mc(mu_gen, cov_gen, mu_inf, cov_inf, mc_n, use_torch, device)
-        kl_mc2, _  = calc_kl_mc(mu_inf, cov_inf, mu_gen, cov_gen, mc_n, use_torch, device)
-        # kl_mc1, _  = calc_kl_mc(mu_gen, cov_gen.detach(), mu_inf.detach(), cov_inf.detach(), device, mc_n)
+        # div_mc_sample, _ = calc_div_mc(mu_gen, cov_gen, mu_inf, cov_inf, mc_n, use_torch, device)
+        div_mc1, _  = calc_div_mc(mu_inf, cov_inf, mu_gen, cov_gen, mc_n, use_torch, device, dtype)
+        div_mc2, _  = calc_div_mc(mu_gen, cov_gen, mu_gen, cov_gen, mc_n, use_torch, device, dtype)
 
-        # kl_mc2, _  = calc_kl_mc(mu_inf.detach(), cov_inf.detach(), mu_gen, cov_gen.detach(), device, mc_n)
-
-        kl_mc += 1 / 2 * (kl_mc1 + kl_mc2)
-    kl_mc /= num_samples 
+        div_mc += 1 / 2 * (div_mc1 + div_mc2)
+        # div_mc += div_mc_sample
+    div_mc /= num_samples 
 
     #scaling = 1
    # mu_inf = get_posterior_mean(model.rec_model, x)
@@ -188,15 +204,15 @@ def calc_kl_from_data(data_true, data_pred, num_samples=1, mc_n=1000, use_torch=
     #cov_gen = scaling * tc.ones_like(data_gen)
 
     #kl_mc, _ = calc_kl_mc(data_true, cov_true, data_gen, cov_gen)
-    return kl_mc
+    return div_mc
 
 # ============================================================
 # COMPUTING ALL SIGNAL METRICS
 # ============================================================
 
-def signal_metrics(true_signal, pred_signal, metrics='all', num_lags=500, max_freq=500, fft_n=1000, dt=1, autocorrel_true=None, use_torch=False, device=None):
-    true_signal = numpy_torch_conversion(true_signal, use_torch, device)
-    pred_signal = numpy_torch_conversion(pred_signal, use_torch, device)
+def signal_metrics(true_signal, pred_signal, metrics='all', num_lags=500, max_freq=500, fft_n=1000, dt=1, autocorrel_true=None, use_torch=False, device=None, dtype='torch.DoubleTensor'):
+    true_signal = numpy_torch_conversion(true_signal, use_torch, device, dtype)
+    pred_signal = numpy_torch_conversion(pred_signal, use_torch, device, dtype)
 
     if metrics=='all':
         metrics = [
@@ -215,7 +231,7 @@ def signal_metrics(true_signal, pred_signal, metrics='all', num_lags=500, max_fr
             'correl_mat_correl',
             'correl_mat_mse',
             'correl_mat_r2',
-            'kl'
+            'div'
         ]
     metric_vals = {}
 
@@ -224,11 +240,11 @@ def signal_metrics(true_signal, pred_signal, metrics='all', num_lags=500, max_fr
     # ------------------------------
 
     if 'correl' in metrics:
-        metric_vals['correl'] = pearsonr(true_signal, pred_signal, use_torch, device).mean()
+        metric_vals['correl'] = pearsonr(true_signal, pred_signal, use_torch, device, dtype).mean()
     if 'mse' in metrics:
         metric_vals['mse'] = ((true_signal - pred_signal)**2).mean()
     if 'r2' in metrics:
-        metric_vals['r2'] = r2_metric(true_signal, pred_signal, use_torch, device).mean()
+        metric_vals['r2'] = r2_metric(true_signal, pred_signal, use_torch, device, dtype).mean()
     
     # ------------------------------
     # AUTOCORRELATION METRICS
@@ -237,8 +253,8 @@ def signal_metrics(true_signal, pred_signal, metrics='all', num_lags=500, max_fr
     autocorrel_metrics = ['autocorrel_correl', 'autocorrel_mse', 'autocorrel_r2']
     if len(set(metrics).intersection(set(autocorrel_metrics))) > 0:
         if autocorrel_true is None:
-            autocorrel_true = get_autocorrel_funcs(true_signal, num_lags, use_torch=use_torch, device=device)
-        autocorrel_pred = get_autocorrel_funcs(pred_signal, num_lags, use_torch=use_torch, device=device)
+            autocorrel_true = get_autocorrel_funcs(true_signal, num_lags, use_torch=use_torch, device=device, dtype=dtype)
+        autocorrel_pred = get_autocorrel_funcs(pred_signal, num_lags, use_torch=use_torch, device=device, dtype=dtype)
 
     if 'autocorrel_correl' in metrics:
         metric_vals['autocorrel_correl'] = pearsonr(autocorrel_true.T, autocorrel_pred.T).mean()
@@ -297,22 +313,22 @@ def signal_metrics(true_signal, pred_signal, metrics='all', num_lags=500, max_fr
 
     correl_mat_metrics = ['correl_mat_correl', 'correl_mat_mse', 'correl_mat_r2']
     if len(set(metrics).intersection(set(correl_mat_metrics))) > 0:
-        true_correl_mat = correlation_matrix(true_signal, use_torch, device)
-        pred_correl_mat = correlation_matrix(pred_signal, use_torch, device)
+        true_correl_mat = correlation_matrix(true_signal, use_torch, device, dtype)
+        pred_correl_mat = correlation_matrix(pred_signal, use_torch, device, dtype)
 
     if 'correl_mat_correl' in metrics:
-        metric_vals['correl_mat_correl'] = pearsonr(true_correl_mat.flatten(), pred_correl_mat.flatten(), use_torch, device)
+        metric_vals['correl_mat_correl'] = pearsonr(true_correl_mat.flatten(), pred_correl_mat.flatten(), use_torch, device, dtype)
     if 'correl_mat_mse' in metrics:
         metric_vals['correl_mat_mse'] = ((true_correl_mat - pred_correl_mat)**2).mean()
     if 'correl_mat_r2' in metrics:
-        metric_vals['correl_mat_r2'] = r2_metric(true_correl_mat.flatten(), pred_correl_mat.flatten(), use_torch, device)
+        metric_vals['correl_mat_r2'] = r2_metric(true_correl_mat.flatten(), pred_correl_mat.flatten(), use_torch, device, dtype)
 
     # ------------------------------
     # KL DIVERGENCE METRICS
     # ------------------------------
 
-    if 'kl' in metrics:
-        metric_vals['kl'] = calc_kl_from_data(true_signal, pred_signal, use_torch=True, device=device)
+    if 'div' in metrics:
+        metric_vals['div'] = calc_div_from_data(true_signal, pred_signal, use_torch=True, device=device, dtype=dtype)
 
     return metric_vals
 
@@ -332,10 +348,10 @@ def compute_integrated_performance(delase, test_signal, metrics=['autocorrel_cor
     if dims_to_analyze is None:
         dims_to_analyze = np.arange(test_signal.shape[1])
     
-    test_signal = numpy_torch_conversion(test_signal, delase.use_torch, delase.device)
+    test_signal = numpy_torch_conversion(test_signal, delase.use_torch, delase.device, delase.dtype)
 
     if autocorrel_true is None:
-        autocorrel_true = get_autocorrel_funcs(test_signal[delase.p:, dims_to_analyze], num_lags, use_torch=delase.use_torch, device=delase.device)
+        autocorrel_true = get_autocorrel_funcs(test_signal[delase.p:, dims_to_analyze], num_lags, use_torch=delase.use_torch, device=delase.device, dtype=delase.dtype)
     if delase.use_torch:
         performance_curve = torch.zeros(len(reseed_vals))
     else:
@@ -348,7 +364,7 @@ def compute_integrated_performance(delase, test_signal, metrics=['autocorrel_cor
     else:
         close = False
     for i, reseed in enumerate(reseed_vals):
-        pred_signal = delase.predict_havok_dmd(test_signal, tail_bite=True, reseed=reseed)
+        pred_signal = delase.predict_havok_dmd(test_signal, tail_bite=True, reseed=reseed, use_real_coords=True)
 
         metric_vals = signal_metrics(test_signal[delase.p:, dims_to_analyze], pred_signal[delase.p:, dims_to_analyze], metrics=metrics, num_lags=num_lags, max_freq=max_freq, fft_n=fft_n, dt=delase.dt, autocorrel_true=autocorrel_true, use_torch=delase.use_torch, device=delase.device)
         all_metric_vals.append(metric_vals)

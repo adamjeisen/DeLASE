@@ -6,24 +6,48 @@ from delase import DeLASE
 from performance_metrics import compute_integrated_performance, get_autocorrel_funcs
 from utils import *
 
+
 class ParameterGrid:
-    def __init__(self, window_vals=np.array([10000]), p_vals=None, matrix_size_vals=None, r_thresh_vals=np.array([0.3, 0.4, 0.5]), lamb_vals = np.array([0, 1e-12, 1e-8, 1e-4, 1e-3, 1e-2, 1e-1, 1]),
-                        reseed_vals=np.array([1, 5, 10, 15, 20, 30, 40, 50, 100, 150, 200, 250, 300, 400, 500, 750, 1000])):
+    def __init__(self, window_vals=np.array([10000]), p_vals=None, matrix_size_vals=None, r_vals=None, r_thresh_vals=None, explained_variance_vals=None):
         self.window_vals = window_vals
         if p_vals is not None and matrix_size_vals is not None:
             raise ValueError("p_vals and matrix_size cannot be provided at the same time! Pick one please :)")
         if p_vals is None and matrix_size_vals is None:
-            p_vals = np.array([20])
+            matrix_size_vals=np.array([3000])
         self.p_vals = p_vals
         self.matrix_size_vals = matrix_size_vals
+        none_vars = (r_thresh_vals is None) + (r_vals is None) + (explained_variance_vals is None)
+        if none_vars < 2:
+            raise ValueError("More than one value was provided between r_vals, r_thresh_vals, and explained_variance_vals. Please provide only one of these, and ensure the others are None!")
+        elif none_vars == 3:
+            explained_variance_vals=np.array([0.99])
+        self.r_vals = r_vals
         self.r_thresh_vals = r_thresh_vals
-        self.lamb_vals = lamb_vals
-        self.reseed_vals = reseed_vals
+        self.explained_variance_vals = explained_variance_vals
     
         if self.p_vals is not None:
-            self.total_combinations = len(window_vals)*len(p_vals)*len(r_thresh_vals)*len(lamb_vals)*len(reseed_vals)
+            num_expansions = len(p_vals)
+            self.expansion_type = 'p'
+            self.expansion_vals = p_vals
         else:
-            self.total_combinations = len(window_vals)*len(matrix_size_vals)*len(r_thresh_vals)*len(lamb_vals)*len(reseed_vals)
+            num_expansions = len(matrix_size_vals)
+            self.expansion_type = 'matrix_size'
+            self.expansion_vals = matrix_size_vals
+        
+        if self.r_vals is not None:
+            num_low_ranks = len(r_vals)
+            self.low_rank_type = 'r'
+            self.low_rank_vals = r_vals
+        elif self.r_thresh_vals is not None:
+            num_low_ranks = len(r_thresh_vals)
+            self.low_rank_type = 'r_thresh'
+            self.low_rank_vals = r_thresh_vals
+        else:
+            num_low_ranks = len(explained_variance_vals)
+            self.low_rank_type = 'explained_variance'
+            self.low_rank_vals = explained_variance_vals
+        
+        self.total_combinations = len(window_vals)*num_expansions*num_low_ranks
 
 def compute_delase_chroots(delase, stability_max_freq=500, stability_max_unstable_freq=None):
     result = {}
@@ -37,7 +61,56 @@ def compute_delase_chroots(delase, stability_max_freq=500, stability_max_unstabl
     
     return result
 
-def fit_and_test_delase(signal, test_signal, window, p, parameter_grid, dt, compute_ip=True, autocorrel_true=None, integrated_performance_kwargs={},
+# ============================================================
+# PICKING BASED ON INTEGRATED PERFORMANCE
+# ============================================================
+
+class ParameterGridIP:
+    def __init__(self, window_vals=np.array([10000]), p_vals=None, matrix_size_vals=None, r_vals=None, r_thresh_vals=None, explained_variance_vals=None, lamb_vals = np.array([0, 1e-12, 1e-8, 1e-4, 1e-3, 1e-2, 1e-1, 1]),
+                        reseed_vals=np.array([1, 5, 10, 15, 20, 30, 40, 50, 100, 150, 200, 250, 300, 400, 500, 750, 1000])):
+        self.window_vals = window_vals
+        if p_vals is not None and matrix_size_vals is not None:
+            raise ValueError("p_vals and matrix_size cannot be provided at the same time! Pick one please :)")
+        if p_vals is None and matrix_size_vals is None:
+            matrix_size_vals=np.array([3000])
+        self.p_vals = p_vals
+        self.matrix_size_vals = matrix_size_vals
+        none_vars = (r_thresh_vals is None) + (r_vals is None) + (explained_variance_vals is None)
+        if none_vars < 2:
+            raise ValueError("More than one value was provided between r_vals, r_thresh_vals, and explained_variance_vals. Please provide only one of these, and ensure the others are None!")
+        elif none_vars == 3:
+            explained_variance_vals=np.array([0.99])
+        self.r_vals = r_vals
+        self.r_thresh_vals = r_thresh_vals
+        self.explained_variance_vals = explained_variance_vals
+        self.lamb_vals = lamb_vals
+        self.reseed_vals = reseed_vals
+    
+        if self.p_vals is not None:
+            num_expansions = len(p_vals)
+            self.expansion_type = 'p'
+            self.expansion_vals = p_vals
+        else:
+            num_expansions = len(matrix_size_vals)
+            self.expansion_type = 'matrix_size'
+            self.expansion_vals = matrix_size_vals
+        
+        if self.r_vals is not None:
+            num_low_ranks = len(r_vals)
+            self.low_rank_type = 'r'
+            self.low_rank_vals = r_vals
+        elif self.r_thresh_vals is not None:
+            num_low_ranks = len(r_thresh_vals)
+            self.low_rank_type = 'r_thresh'
+            self.low_rank_vals = r_thresh_vals
+        else:
+            num_low_ranks = len(explained_variance_vals)
+            self.low_rank_type = 'explained_variance'
+            self.low_rank_vals = explained_variance_vals
+        
+        self.total_combinations = len(window_vals)*num_expansions*num_low_ranks*len(lamb_vals)*len(reseed_vals)
+
+def fit_and_test_delase(signal, test_signal, window, expansion_val, parameter_grid, dt, compute_ip=True, autocorrel_true=None, integrated_performance_kwargs={},
                         compute_chroots=True, stability_max_freq=500, stability_max_unstable_freq=125, use_torch=False, device=None, track_reseeds=False, iterator=None, message_queue=None, worker_num=None):
     results = []
 
@@ -54,21 +127,31 @@ def fit_and_test_delase(signal, test_signal, window, p, parameter_grid, dt, comp
     # -----------
     # Compute hankel matrix and SVD
     # -----------
-    delase = DeLASE(signal, p=p, dt=dt, use_torch=use_torch, device=device)
-    for r_thresh in parameter_grid.r_thresh_vals:
+    delase_init_args = {
+        parameter_grid.expansion_type: expansion_val,
+        'dt': dt,
+        'use_torch': use_torch,
+        'device': device
+    }
+    delase = DeLASE(signal, **delase_init_args)
+    for low_rank_val in parameter_grid.low_rank_vals:
         for lamb in parameter_grid.lamb_vals:
 
-            result = dict(
-                window=window,
-                p=p,
-                r_thresh=r_thresh,
-                lamb=lamb,
-            )
+            result = {
+                'window': window,
+                parameter_grid.expansion_type: expansion_val,
+                parameter_grid.low_rank_type: low_rank_val,
+                'lamb': lamb,
+            }
 
             # -----------
             # Compute HAVOK DMD
             # -----------
-            delase.compute_havok_dmd(r_thresh=r_thresh, lamb=lamb)
+            delase_havok_dmd_args = {
+                parameter_grid.low_rank_type: low_rank_val,
+                'lamb': lamb
+            }
+            delase.compute_havok_dmd(**delase_havok_dmd_args)
 
             # -----------
             # Compute integrated performance
@@ -138,17 +221,19 @@ def parameter_search(train_signal, test_signal, parameter_grid=None, dt=1, compu
         track_reseeds=track_reseeds
     )
 
-    if parameter_grid.p_vals is not None:
-        for window in parameter_grid.window_vals:
-            signal = train_signal[:window]
-            for p in parameter_grid.p_vals:
-                results.extend(fit_and_test_delase(signal, test_signal, window, p, **fit_and_test_args))
-    else:
-        for window in parameter_grid.window_vals:
-            signal = train_signal[:window]
-            for matrix_size in parameter_grid.matrix_size_vals:
-                p = int(np.ceil(matrix_size/train_signal.shape[1]))
-                results.extend(fit_and_test_delase(signal, test_signal, window, p, **fit_and_test_args))
+
+    for window in parameter_grid.window_vals:
+        signal = train_signal[:window]
+        for expansion_val in parameter_grid.expansion_vals:
+            if parameter_grid.expansion_type == 'matrix_size':
+                p = int(np.ceil(expansion_val/train_signal.shape[1]))
+            if p*train_signal.shape[1] < window - p:
+                results.extend(fit_and_test_delase(signal, test_signal, window, expansion_val, **fit_and_test_args))
+            else:
+                if track_reseeds:
+                    iterator.update(len(parameter_grid.reseed_vals))
+                else:
+                    iterator.update(1)
 
     iterator.close()
 

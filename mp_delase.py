@@ -22,16 +22,12 @@ def mp_worker(worker_num, task_queue, message_queue=None, use_cuda=False):
         try:
             # pull a task from the queue
             task_params = task_queue.get_nowait()
-            data_loading_args, window, expansion_val, expansion_type, autocorrel_kwargs, fit_and_test_args, T_pred, RESULTS_DIR, session, area, norm = task_params
-            if expansion_type == 'p':
-                p = expansion_val
-            else: # expansion_type == 'matrix_size'
-                matrix_size = expansion_val
-            
+            data_loading_args, window, expansion_val, autocorrel_kwargs, fit_and_test_args, T_pred, RESULTS_DIR, session, area, norm = task_params
+
             results_dir = os.path.join(RESULTS_DIR, os.path.join(session, 'NORMED' if norm else 'NOT_NORMED', area))
 
             os.makedirs(results_dir, exist_ok=True)
-            save_path = os.path.join(results_dir, f"{data_loading_args['window_start']}_window_{window}_{expansion_type}_{expansion_val}")
+            save_path = os.path.join(results_dir, f"{data_loading_args['window_start']}_window_{window}_{fit_and_test_args['parameter_grid'].expansion_type}_{expansion_val}")
             if os.path.exists(save_path):
                 if message_queue is not None:
                     message_queue.put((worker_num, f"{save_path} is already complete", "DEBUG"))
@@ -59,14 +55,7 @@ def mp_worker(worker_num, task_queue, message_queue=None, use_cuda=False):
                 autocorrel_true = get_autocorrel_funcs(signal[window:window + T_pred], use_torch=True, device=worker_num if use_cuda else 'cpu', **autocorrel_kwargs)
                 fit_and_test_args['autocorrel_true'] = autocorrel_true
 
-                if expansion_type == 'matrix_size':
-                    p = int(np.ceil(matrix_size/signal.shape[1]))
-
-                results = fit_and_test_delase(signal[:window], signal[window:window + T_pred], window, p, **fit_and_test_args)
-                
-                if expansion_type == 'matrix_size':
-                    for i in range(len(results)):
-                        results[i]['matrix_size'] = matrix_size
+                results = fit_and_test_delase(signal[:window], signal[window:window + T_pred], window, expansion_val, **fit_and_test_args)
                 
                 pd.to_pickle(results, save_path)
 
