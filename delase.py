@@ -4,22 +4,32 @@ import torch
 from stability_estimation import compute_DDE_chroots
 from utils import *
 
-def embed_signal(x, m, tau=1, use_bias=False, use_torch=False, device=None, dtype='torch.DoubleTensor'):
+def embed_signal(x, m, tau=1, use_torch=False, device='cpu', dtype='torch.DoubleTensor'):
     x = numpy_torch_conversion(x, use_torch, device, dtype)
-    if use_torch:
-        device = x.device
-        embedding = torch.zeros((x.shape[0] - (m - 1)*tau, x.shape[1]*m)).type(dtype).to(device)
-    else:
-        embedding = np.zeros((x.shape[0] - (m - 1) * tau, x.shape[1]*m))
-    for d in range(m):
-        embedding[:, d*x.shape[1]:(d + 1)*x.shape[1]] = x[(m - 1 - d)*tau:x.shape[0] - d*tau]
+    if len(x.shape) == 3:
+        if use_torch:
+            device = x.device
+            embedding = torch.zeros((x.shape[0], x.shape[1] - (m - 1)*tau, x.shape[2]*m)).type(dtype).to(device)
+        else:
+            embedding = np.zeros((x.shape[0], x.shape[1] - (m - 1) * tau, x.shape[2]*m))
+        for d in range(m):
+            embedding[:, :, d*x.shape[2]:(d + 1)*x.shape[2]] = x[:, (m - 1 - d)*tau:x.shape[1] - d*tau]
+
+    else: # len(x.shape) == 2
+        if use_torch:
+            device = x.device
+            embedding = torch.zeros((x.shape[0] - (m - 1)*tau, x.shape[1]*m)).type(dtype).to(device)
+        else:
+            embedding = np.zeros((x.shape[0] - (m - 1) * tau, x.shape[1]*m))
+        for d in range(m):
+            embedding[:, d*x.shape[1]:(d + 1)*x.shape[1]] = x[(m - 1 - d)*tau:x.shape[0] - d*tau]
 
     return embedding
 
 class DeLASE:
     def __init__(self, data, p=None, matrix_size=None, tau=1, dt=None, svd=True, approx_rank=None, use_torch=False, device=None, dtype='torch.DoubleTensor', verbose=False):
-        self.window = data.shape[0]
-        self.n = data.shape[1]
+        self.window = data.shape[-2]
+        self.n = data.shape[-1]
         if p is not None and matrix_size is not None:
             raise ValueError("Cannot provide both p and matrix_size!!")
         elif p is None:

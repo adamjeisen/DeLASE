@@ -210,7 +210,7 @@ def calc_div_from_data(data_true, data_pred, num_samples=1, mc_n=1000, symmetric
 # COMPUTING ALL SIGNAL METRICS
 # ============================================================
 
-def signal_metrics(true_signal, pred_signal, metrics='all', num_lags=500, max_freq=500, fft_n=1000, dt=1, autocorrel_true=None, use_torch=False, device=None, dtype='torch.DoubleTensor'):
+def signal_metrics(true_signal, pred_signal, metrics='all', num_lags=500, max_freq=500, fft_n=None, dt=1, autocorrel_true=None, use_torch=False, device=None, dtype='torch.DoubleTensor'):
     true_signal = numpy_torch_conversion(true_signal, use_torch, device, dtype)
     pred_signal = numpy_torch_conversion(pred_signal, use_torch, device, dtype)
 
@@ -269,6 +269,8 @@ def signal_metrics(true_signal, pred_signal, metrics='all', num_lags=500, max_fr
 
     fft_metrics = ['fft_correl', 'fft_mse', 'fft_r2', 'log_fft_correl', 'log_fft_mse', 'log_fft_r2']
     if len(set(metrics).intersection(set(fft_metrics))) > 0:
+        if fft_n is None:
+            fft_n = true_signal.shape[0]
         if use_torch:
             fft_true = torch.abs(torch.fft.rfft(true_signal.T, n=fft_n))
             fft_pred = torch.abs(torch.fft.rfft(pred_signal.T, n=fft_n))
@@ -337,7 +339,7 @@ def signal_metrics(true_signal, pred_signal, metrics='all', num_lags=500, max_fr
 # ============================================================
 
 #TODO: max_freq = 100?
-def compute_integrated_performance(delase, test_signal, metrics=['autocorrel_correl', 'fft_correl', 'fft_r2'], weights='equal', num_lags=500, max_freq=500, fft_n=1000, 
+def compute_integrated_performance(delase, test_signal, metrics=['autocorrel_correl', 'fft_correl', 'fft_r2'], weights='equal', num_lags=500, max_freq=500, fft_n=None, 
             reseed_vals=np.array([1, 5, 10, 15, 20, 30, 40, 50, 100, 150, 200, 250, 300, 400, 500, 750, 1000]), autocorrel_true=None, dims_to_analyze=None, iterator=None, message_queue=None, worker_num=None, verbose=False, full_return=False):
     if weights == 'equal':
         weights = np.ones(len(metrics)) / len(metrics)
