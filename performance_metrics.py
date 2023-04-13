@@ -10,12 +10,16 @@ from utils import *
 # AIC
 # ============================================================
 
-def compute_AIC(delase, test_signal):
+def compute_AIC(delase, test_signal, norm=False):
     N = (test_signal.shape[0] - delase.p)*test_signal.shape[1]
     preds = delase.predict_havok_dmd(test_signal, use_real_coords=True)
     if delase.use_torch:
-        preds = preds.cpu()
-    AIC = float(N*np.log(((preds[delase.p:] - test_signal[delase.p:])**2).sum()/N) + 2*(delase.A_v.shape[0]*delase.A_v.shape[1] + 1))
+        AIC = float(N*torch.log(((preds[delase.p:] - test_signal[delase.p:])**2).sum()/N) + 2*(delase.A_v.shape[0]*delase.A_v.shape[1] + 1))
+    else:
+        AIC = float(N*np.log(((preds[delase.p:] - test_signal[delase.p:])**2).sum()/N) + 2*(delase.A_v.shape[0]*delase.A_v.shape[1] + 1))
+
+    if norm:
+        AIC /= N
 
     return AIC
 

@@ -13,7 +13,7 @@ def numpy_torch_conversion(x, use_torch, device='cpu', dtype='torch.DoubleTensor
     
     return x
 
-def load_window_from_chunks(window_start, window_end, directory, dimension_inds=None):
+def load_window_from_chunks(window_start, window_end, directory, dimension_inds=None, debug=False):
     dt = directory.end_time.iloc[0]/directory.end_ind.iloc[0]
     window_start = int(window_start/dt)
     window_end = int(window_end/dt)
@@ -26,8 +26,16 @@ def load_window_from_chunks(window_start, window_end, directory, dimension_inds=
     window_data = None
     
     pos_in_window = 0
+    if debug:
+        print(f"window_start = {window_start}")
+        print(f"window_start = {window_end}")
     for row_ind in range(start_row, end_row + 1):
         row = directory.iloc[row_ind]
+        if debug:
+            print(f"-"*20)
+            print(f"ROW IND = {row_ind}")
+            print(f"row.start_ind = {row.start_ind}")
+            print(f"row.end_ind = {row.end_ind}")
         chunk = pd.read_pickle(row.filepath)
         if dimension_inds is None:
             dimension_inds = np.arange(chunk.shape[1])
@@ -43,6 +51,9 @@ def load_window_from_chunks(window_start, window_end, directory, dimension_inds=
             end_in_chunk = chunk.shape[0]
         else:
             end_in_chunk = window_end - row.start_ind
+        if debug:
+            print(f"start_in_chunk = {start_in_chunk}")
+            print(f"end_in_chunk = {end_in_chunk}")
 
         window_data[pos_in_window:pos_in_window + end_in_chunk - start_in_chunk] = chunk[start_in_chunk:end_in_chunk, dimension_inds]
         pos_in_window += end_in_chunk - start_in_chunk
