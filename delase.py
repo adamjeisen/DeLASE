@@ -184,7 +184,7 @@ class DeLASE:
         if none_vars < 2:
             raise ValueError("More than one value was provided between r, r_thresh, and explained_variance. Please provide only one of these, and ensure the others are None!")
         elif none_vars == 3:
-            explained_variance=0.99
+            r=len(self.S)
 
         if r_thresh is not None:
             if self.S[-1] > r_thresh:
@@ -251,7 +251,7 @@ class DeLASE:
         if verbose:
             print("Least squares complete!")
     
-    def predict_havok_dmd(self, test_data, tail_bite=False, reseed=None, use_real_coords=True, full_return=False, verbose=False):
+    def predict_havok_dmd(self, test_data, tail_bite=False, reseed=None, use_real_coords=True, scale=1, full_return=False, verbose=False):
         test_data = numpy_torch_conversion(test_data, self.use_torch, self.device, self.dtype)
         H_test = embed_signal(test_data, self.p, self.tau, use_torch=self.use_torch, device=self.device, dtype=self.dtype)
         if not use_real_coords:
@@ -262,7 +262,7 @@ class DeLASE:
 
         if tail_bite:
             if reseed is None:
-                reseed = V_test.shape[0] + 1
+                reseed = H_test.shape[0] + 1
 
             if use_real_coords:
                 if self.use_torch:
@@ -275,7 +275,7 @@ class DeLASE:
                     if t % reseed == 0:
                         H_test_havok_dmd[t] = self.A @ H_test[t - 1]
                     else:
-                        H_test_havok_dmd[t] = self.A @ H_test_havok_dmd[t - 1]
+                        H_test_havok_dmd[t] = self.A @ H_test_havok_dmd[t - 1]/scale
                     if self.use_bias:
                         H_test_havok_dmd[t] += self.B
             else: 
@@ -316,9 +316,9 @@ class DeLASE:
                     H_test_havok_dmd = (self.U @ self.S_mat[:, :self.r] @ V_test_havok_dmd.T).T
 
         if self.use_torch:
-            pred_data = torch.vstack([test_data[:self.p], H_test_havok_dmd[1:, :self.n]])
+            pred_data = torch.vstack([test_data[:((self.p - 1)*self.tau) + 1], H_test_havok_dmd[1:, :self.n]])
         else:
-            pred_data = np.vstack([test_data[:self.p], H_test_havok_dmd[1:, :self.n]])
+            pred_data = np.vstack([test_data[:((self.p - 1)*self.tau) + 1], H_test_havok_dmd[1:, :self.n]])
 
         if full_return:
             return pred_data, H_test_havok_dmd, H_test, V_test_havok_dmd, V_test

@@ -1,4 +1,6 @@
+from copy import deepcopy
 import numpy as np
+import scipy
 from scipy.integrate import trapezoid
 from scipy.stats import pearsonr
 import torch
@@ -13,6 +15,7 @@ from utils import *
 def compute_AIC(delase, test_signal, norm=False):
     N = (test_signal.shape[0] - delase.p)*test_signal.shape[1]
     preds = delase.predict_havok_dmd(test_signal, use_real_coords=True)
+    test_signal = numpy_torch_conversion(test_signal, delase.use_torch, delase.device, delase.dtype)
     if delase.use_torch:
         AIC = float(N*torch.log(((preds[delase.p:] - test_signal[delase.p:])**2).sum()/N) + 2*(delase.A_v.shape[0]*delase.A_v.shape[1] + 1))
     else:
@@ -50,6 +53,7 @@ def pearsonr(x, y, use_torch=False, device=None, dtype='torch.DoubleTensor'):
         ym = y - np.expand_dims(y.mean(axis=1), -1)
         num = (xm*ym).sum(axis=1)
         denom = np.linalg.norm(xm, axis=1, ord=2)*np.linalg.norm(ym, axis=1, ord=2)
+
     return num/denom
 
 # num_time_points x num_dimensions
@@ -142,11 +146,10 @@ def eval_likelihood_gmm_for_diagonal_cov(z, mu, std, use_torch=False):
 ## KLX Statespace
 def calc_div_mc(mu_inf, cov_inf, mu_gen, cov_gen, mc_n=1000, use_torch=False, device=None, dtype='torch.DoubleTensor'):
     if use_torch:
-        t = torch.randint(0, mu_inf.shape[0], (mc_n,)).type(dtype).to(device)
+        t = torch.randint(0, mu_inf.shape[0], (mc_n,)).to(device)
 
         std_inf = torch.sqrt(cov_inf).type(dtype).to(device)
         std_gen = torch.sqrt(cov_gen).type(dtype).to(device)
-
         z_sample = (mu_inf[t] + std_inf[t] * torch.randn(mu_inf[t].shape).type(dtype).to(device)).reshape((mc_n, 1, -1))
     else:
         t = np.random.randint(0, mu_inf.shape[0], (mc_n, ))
@@ -214,7 +217,7 @@ def calc_div_from_data(data_true, data_pred, num_samples=1, mc_n=1000, symmetric
 # COMPUTING ALL SIGNAL METRICS
 # ============================================================
 
-def signal_metrics(true_signal, pred_signal, metrics='all', num_lags=500, max_freq=500, fft_n=None, dt=1, autocorrel_true=None, use_torch=False, device=None, dtype='torch.DoubleTensor'):
+def signal_metrics(true_signal, pred_signal, metrics='all', num_lags=500, min_freq=0, max_freq=500, fft_n=None, dt=1, spectrum_smoothing_width=0, standardize=False, autocorrel_true=None, use_torch=False, device=None, dtype='torch.DoubleTensor', return_components=False, verbose=False):
     true_signal = numpy_torch_conversion(true_signal, use_torch, device, dtype)
     pred_signal = numpy_torch_conversion(pred_signal, use_torch, device, dtype)
 
@@ -238,16 +241,23 @@ def signal_metrics(true_signal, pred_signal, metrics='all', num_lags=500, max_fr
             'div'
         ]
     metric_vals = {}
+    metric_components = {}
 
     # ------------------------------
     # RAW SIGNAL METRICS
     # ------------------------------
 
     if 'correl' in metrics:
+        if verbose:
+            print('Computing raw signal correlation')
         metric_vals['correl'] = pearsonr(true_signal, pred_signal, use_torch, device, dtype).mean()
     if 'mse' in metrics:
+        if verbose:
+            print('Computing raw signal MSE')
         metric_vals['mse'] = ((true_signal - pred_signal)**2).mean()
     if 'r2' in metrics:
+        if verbose:
+            print('Computing raw signal R2')
         metric_vals['r2'] = r2_metric(true_signal, pred_signal, use_torch, device, dtype).mean()
     
     # ------------------------------
@@ -259,12 +269,23 @@ def signal_metrics(true_signal, pred_signal, metrics='all', num_lags=500, max_fr
         if autocorrel_true is None:
             autocorrel_true = get_autocorrel_funcs(true_signal, num_lags, use_torch=use_torch, device=device, dtype=dtype)
         autocorrel_pred = get_autocorrel_funcs(pred_signal, num_lags, use_torch=use_torch, device=device, dtype=dtype)
+        if return_components:
+            metric_components['autocorrel'] = dict(
+                true=autocorrel_true,
+                pred=autocorrel_pred
+            )
 
     if 'autocorrel_correl' in metrics:
+        if verbose:
+            print('Computing autocorrelation correlation')
         metric_vals['autocorrel_correl'] = pearsonr(autocorrel_true.T, autocorrel_pred.T).mean()
     if 'autocorrel_mse' in metrics:
+        if verbose:
+            print('Computing raw signal MSE')
         metric_vals['autocorrel_mse'] = ((autocorrel_true - autocorrel_pred)**2).mean()
     if 'autocorrel_r2' in metrics:
+        if verbose:
+            print('Computing raw signal R2')
         metric_vals['autocorrel_r2'] = r2_metric(autocorrel_true.T, autocorrel_pred.T).mean()
     
     # ------------------------------
@@ -283,34 +304,79 @@ def signal_metrics(true_signal, pred_signal, metrics='all', num_lags=500, max_fr
             fft_true = np.abs(np.fft.rfft(true_signal.T, n=fft_n))
             fft_pred = np.abs(np.fft.rfft(pred_signal.T, n=fft_n))
             freqs = np.fft.rfftfreq(fft_n, d=dt)
-        freq_inds = freqs <= max_freq
         
+        if use_torch:
+            freqs = freqs.cpu().numpy()
+            fft_true = fft_true.cpu().numpy()
+            fft_pred = fft_pred.cpu().numpy()
+        
+        freq_inds = np.logical_and(freqs <= max_freq, freqs >= min_freq)
         fft_true = fft_true[:, freq_inds]
         fft_pred = fft_pred[:, freq_inds]
+
+        df = freqs[1]
+        
+        if spectrum_smoothing_width > 0:
+            for i in range(fft_true.shape[0]):
+                fft_true[i] = scipy.ndimage.gaussian_filter1d(np.abs(fft_true[i]), spectrum_smoothing_width/df)
+                fft_pred[i] = scipy.ndimage.gaussian_filter1d(np.abs(fft_pred[i]), spectrum_smoothing_width/df)
+        if standardize:
+            fft_true_ = deepcopy(fft_true)
+            fft_pred_ = deepcopy(fft_pred)
+            for i in range(fft_true.shape[0]):
+                fft_true[i] = (fft_true[i] - fft_true[i].mean())/fft_true.std()
+                fft_pred[i] = (fft_pred[i] - fft_pred[i].mean())/fft_pred.std()
         freqs = freqs[freq_inds]
+
+        if return_components:
+            metric_components['fft'] = dict(
+                true=fft_true,
+                pred=fft_pred,
+                freqs=freqs
+            )
     
     if 'fft_correl' in metrics:
+        if verbose:
+            print('Computing power spectra correlation')
         metric_vals['fft_correl'] = pearsonr(fft_true.T, fft_pred.T).mean()
     if 'fft_mse' in metrics:
+        if verbose:
+            print('Computing power spectra MSE')
         metric_vals['fft_mse'] = ((fft_true - fft_pred)**2).mean()
     if 'fft_r2' in metrics:
+        if verbose:
+            print('Computing power spectra R2')
         metric_vals['fft_r2'] = r2_metric(fft_true.T, fft_pred.T).mean()
 
     log_fft_metrics = ['log_fft_correl', 'log_fft_mse', 'log_fft_r2']
 
     if len(set(metrics).intersection(set(log_fft_metrics))) > 0:
-        if use_torch:
-            log_fft_true = 10*torch.log10(fft_true)
-            log_fft_pred = 10*torch.log10(fft_pred)
-        else:
-            log_fft_true = 10*np.log10(fft_true)
-            log_fft_pred = 10*np.log10(fft_pred)
+        log_fft_true = 10*np.log10(fft_true_)
+        log_fft_pred = 10*np.log10(fft_pred_)
+
+        if standardize:
+            for i in range(fft_true.shape[0]):
+                log_fft_true[i] = (log_fft_true[i] - log_fft_true[i].mean())/log_fft_true.std()
+                log_fft_pred[i] = (log_fft_pred[i] - log_fft_pred[i].mean())/log_fft_pred.std()
+
+        if return_components:
+            metric_components['log_fft'] = dict(
+                true=log_fft_true,
+                pred=log_fft_pred,
+                freqs=freqs
+            )
     
     if 'log_fft_correl' in metrics:
+        if verbose:
+            print('Computing log spectra correlation')
         metric_vals['log_fft_correl'] = pearsonr(log_fft_true.T, log_fft_pred.T).mean()
     if 'log_fft_mse' in metrics:
+        if verbose:
+            print('Computing log power spectra correlation')
         metric_vals['log_fft_mse'] = ((log_fft_true - log_fft_pred)**2).mean()
     if 'log_fft_r2' in metrics:
+        if verbose:
+            print('Computing log power spectra R2')
         metric_vals['log_fft_r2'] = r2_metric(log_fft_true.T, log_fft_pred.T).mean()
 
     # ------------------------------
@@ -321,12 +387,23 @@ def signal_metrics(true_signal, pred_signal, metrics='all', num_lags=500, max_fr
     if len(set(metrics).intersection(set(correl_mat_metrics))) > 0:
         true_correl_mat = correlation_matrix(true_signal, use_torch, device, dtype)
         pred_correl_mat = correlation_matrix(pred_signal, use_torch, device, dtype)
+        if return_components:
+            metric_components['correl_mat'] = dict(
+                true=true_correl_mat,
+                pred=pred_correl_mat
+            )
 
     if 'correl_mat_correl' in metrics:
+        if verbose:
+            print('Computing correlation matrix correlation')
         metric_vals['correl_mat_correl'] = pearsonr(true_correl_mat.flatten(), pred_correl_mat.flatten(), use_torch, device, dtype)
     if 'correl_mat_mse' in metrics:
+        if verbose:
+            print('Computing correlation matrix MSE')
         metric_vals['correl_mat_mse'] = ((true_correl_mat - pred_correl_mat)**2).mean()
     if 'correl_mat_r2' in metrics:
+        if verbose:
+            print('Computing correlation matrix R2')
         metric_vals['correl_mat_r2'] = r2_metric(true_correl_mat.flatten(), pred_correl_mat.flatten(), use_torch, device, dtype)
 
     # ------------------------------
@@ -336,14 +413,17 @@ def signal_metrics(true_signal, pred_signal, metrics='all', num_lags=500, max_fr
     if 'div' in metrics:
         metric_vals['div'] = calc_div_from_data(true_signal, pred_signal, use_torch=True, device=device, dtype=dtype)
 
-    return metric_vals
+    if return_components:
+        return metric_vals, metric_components
+    else:
+        return metric_vals
 
 # ============================================================
 # INTEGRATED PERFORMANCE
 # ============================================================
 
 #TODO: max_freq = 100?
-def compute_integrated_performance(delase, test_signal, metrics=['autocorrel_correl', 'fft_correl', 'fft_r2'], weights='equal', num_lags=500, max_freq=500, fft_n=None, 
+def compute_integrated_performance(delase, test_signal, metrics=['autocorrel_correl', 'fft_correl', 'fft_r2'], weights='equal', num_lags=500, max_freq=200, fft_n=None, 
             reseed_vals=np.array([1, 5, 10, 15, 20, 30, 40, 50, 100, 150, 200, 250, 300, 400, 500, 750, 1000]), autocorrel_true=None, dims_to_analyze=None, iterator=None, message_queue=None, worker_num=None, verbose=False, full_return=False):
     if weights == 'equal':
         weights = np.ones(len(metrics)) / len(metrics)

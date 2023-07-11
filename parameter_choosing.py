@@ -17,6 +17,7 @@ class ParameterGrid:
         self.matrix_size_vals = matrix_size_vals
         self.r_vals = r_vals
         self.reseed = reseed
+        self.reseed_vals = reseed_vals
     
         if self.p_vals is not None:
             num_expansions = len(p_vals)
@@ -45,7 +46,7 @@ def compute_delase_chroots(delase, stability_max_freq=500, stability_max_unstabl
     return result
 
 def fit_and_test_delase(signal, test_signal, window, expansion_val, parameter_grid, dt, norm_aic=True, compute_ip=False, autocorrel_true=None, integrated_performance_kwargs={},
-                        compute_chroots=True, stability_max_freq=500, stability_max_unstable_freq=125, use_torch=False, device='cpu', dtype='torch.DoubleTensor', track_reseeds=False, iterator=None, message_queue=None, worker_num=None, verbose=False):
+                        compute_chroots=True, stability_max_freq=500, stability_max_unstable_freq=125, save_jacobians=False, use_torch=False, device='cpu', dtype='torch.DoubleTensor', track_reseeds=False, iterator=None, message_queue=None, worker_num=None, verbose=False):
     results = []
 
     integrated_performance_args = dict(
@@ -96,15 +97,17 @@ def fit_and_test_delase(signal, test_signal, window, expansion_val, parameter_gr
             # -----------
             # Compute HAVOK DMD
             # -----------
-            if message_queue is not None:
-                message_queue.put((worker_num, f"Computing least squares fit to HAVOK DMD...", "DEBUG"))
-            else:
-                print(f"Computing least squares fit to HAVOK DMD...")
+            if verbose:
+                if message_queue is not None:
+                    message_queue.put((worker_num, f"Computing least squares fit to HAVOK DMD...", "DEBUG"))
+                else:
+                    print(f"Computing least squares fit to HAVOK DMD...")
             delase.compute_havok_dmd(r=r)
-            if message_queue is not None:
-                message_queue.put((worker_num, f"HAVOK DMD complete!", "DEBUG"))
-            else:
-                print(f"HAVOK DMD complete!")
+            if verbose:
+                if message_queue is not None:
+                    message_queue.put((worker_num, f"HAVOK DMD complete!", "DEBUG"))
+                else:
+                    print(f"HAVOK DMD complete!")
 
             # -----------
             # Compute AIC
@@ -115,32 +118,43 @@ def fit_and_test_delase(signal, test_signal, window, expansion_val, parameter_gr
             # Compute integrated performance
             # -----------
             if compute_ip:
-                if message_queue is not None:
-                    message_queue.put((worker_num, f"Computing integrated performance...", "DEBUG"))
-                else:
-                    print(f"Computing integrated performance...")
-                ret_dict = compute_integrated_performance(delase, test_signal, **integrated_performance_args, verbose=True)
+                if verbose:
+                    if message_queue is not None:
+                        message_queue.put((worker_num, f"Computing integrated performance...", "DEBUG"))
+                    else:
+                        print(f"Computing integrated performance...")
+                ret_dict = compute_integrated_performance(delase, test_signal, **integrated_performance_args, verbose=verbose if message_queue is None else False)
                 result = result | ret_dict
-                if message_queue is not None:
-                    message_queue.put((worker_num, "Integrated performance computed!", "DEBUG"))
-                else:
-                    print("Integrated performance computed!")
+                if verbose:
+                    if message_queue is not None:
+                        message_queue.put((worker_num, "Integrated performance computed!", "DEBUG"))
+                    else:
+                        print("Integrated performance computed!")
             
             # -----------
             # Compute characteristic roots
             # -----------
             if compute_chroots:
-                if message_queue is not None:
-                    message_queue.put((worker_num, "Computing characteristic roots...", "DEBUG"))
-                else:
-                    print("Computing characteristic roots...")
+                if verbose:
+                    if message_queue is not None:
+                        message_queue.put((worker_num, "Computing characteristic roots...", "DEBUG"))
+                    else:
+                        print("Computing characteristic roots...")
                 ret_dict = compute_delase_chroots(delase, stability_max_freq, stability_max_unstable_freq)
                 result = result | ret_dict
-                if message_queue is not None:
-                    message_queue.put((worker_num, "Characteristic roots computed!", "DEBUG"))
-                else:
-                    print("Characteristic roots computed!")
-            
+                if verbose:
+                    if message_queue is not None:
+                        message_queue.put((worker_num, "Characteristic roots computed!", "DEBUG"))
+                    else:
+                        print("Characteristic roots computed!")
+            # -----------
+            # Save Jacobians
+            # -----------
+            if save_jacobians:
+                if not compute_chroots:
+                    delase.compute_jacobians()
+                result['Js'] = delase.Js
+
             # -----------
             # Append result
             # -----------
@@ -223,7 +237,9 @@ def parameter_search(train_signal, test_signal, parameter_grid=None, dt=1, compu
 
     iterator.close()
 
-    return pd.DataFrame(results)
+    results = pd.DataFrame(results)
+
+    return results.set_index(['window', parameter_grid.expansion_type, 'r'])
 
 # ============================================================
 # PICKING BASED ON INTEGRATED PERFORMANCE

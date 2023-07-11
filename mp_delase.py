@@ -58,6 +58,8 @@ def mp_worker(worker_num, task_queue, message_queue=None, use_cuda=False):
                         'stability_params': [],
                         'stability_freqs': []
                     }
+                    if fit_and_test_args['save_jacobians']:
+                        results['Js'] = []
                     pd.to_pickle(results, save_path)
                     for r in fit_and_test_args['parameter_grid'].r_vals:
                         message_queue.put((worker_num, "task complete", "DEBUG"))
@@ -77,7 +79,7 @@ def mp_worker(worker_num, task_queue, message_queue=None, use_cuda=False):
                         fit_and_test_args['device']='cpu'
                     
                     if fit_and_test_args['compute_ip']:
-                        autocorrel_true = get_autocorrel_funcs(signal[window:window + T_pred], use_torch=True, device=worker_num if use_cuda else 'cpu', **autocorrel_kwargs)
+                        autocorrel_true = get_autocorrel_funcs(signal[window:window + T_pred], use_torch=fit_and_test_args['use_torch'], device=worker_num if use_cuda else 'cpu', **autocorrel_kwargs)
                         fit_and_test_args['autocorrel_true'] = autocorrel_true
 
                     fit_and_test_args['verbose'] = True
@@ -146,6 +148,8 @@ if __name__ == '__main__':
     if mp_args.COMPUTE_IP:
         if 'num_lags' in mp_args.integrated_performance_kwargs.keys():
             autocorrel_kwargs = {'num_lags': mp_args.integrated_performance_kwargs['num_lags']}
+        else:
+            autocorrel_kwargs = {'num_lags': 500}
     else:
         autocorrel_kwargs = {}
 
@@ -158,6 +162,7 @@ if __name__ == '__main__':
         compute_chroots=mp_args.COMPUTE_CHROOTS,
         stability_max_freq=mp_args.stability_max_freq,
         stability_max_unstable_freq=mp_args.stability_max_unstable_freq,
+        save_jacobians=mp_args.SAVE_JACOBIANS,
         use_torch=mp_args.USE_TORCH,
         dtype=mp_args.DTYPE,
         track_reseeds=mp_args.TRACK_RESEEDS
@@ -222,8 +227,8 @@ if __name__ == '__main__':
     if mp_args.QUEUE_FULL_SESSION:
         logger.debug("Queueing full session")
         session_results = {}
-        data_processing_df_grid = deepcopy(mp_args.data_processing_df)
-        for session in np.unique(data_processing_df_grid.session):
+        # data_processing_df_grid = deepcopy(mp_args.data_processing_df)
+        for session in np.unique(mp_args.session_list):
 
             all_data_dir = '/scratch2/weka/millerlab/eisenaj/datasets/anesthesia/mat'
             data_class = get_data_class(session, all_data_dir)
@@ -235,79 +240,115 @@ if __name__ == '__main__':
 
             session_results[session] = {}
             norm_folder = "NOT_NORMED" if not mp_args.NORM else "NORMED"
+            
+            directory = mp_args.directories[session]
+            
+            
             areas = os.listdir(os.path.join(mp_args.RESULTS_DIR, session, norm_folder))
 
-            directory = data_processing_df_grid[data_processing_df_grid.session == session].directory.iloc[0]
             for area in areas:
-                if area != 'all':
-                    df = pd.DataFrame({'window': [], 'matrix_size': [], 'r': [], 'AICs': [], 'time_vals': [], 'file_paths': []}).set_index(['window', 'matrix_size', 'r'])
-                    for f in os.listdir(os.path.join(mp_args.RESULTS_DIR, session, norm_folder, area)):
-                        t = float(f.split('_')[0])
-                        file_path = os.path.join(mp_args.RESULTS_DIR, session, norm_folder, area, f)
-                        df_new = pd.DataFrame(pd.read_pickle(file_path))
-                        if np.isnan(df_new.AIC).sum() > 0:
-                            print(file_path)
-                        df_new = df_new.set_index(['window', 'matrix_size', 'r'])
-                        for i, row in df_new.iterrows():
-                            if i in df.index:
-                                df.loc[i, 'AICs'].append(row.AIC)
-                                df.loc[i, 'time_vals'].append(t)
-                                df.loc[i, 'file_paths'].append(file_path)
-                            else:
-                                df.loc[i] = {'AICs': [row.AIC], 'time_vals': [t], 'file_paths': [file_path]}
-                    
-                    df = df.loc[df.index.sortlevel()[0]]
-                    session_results[session][area] = df
+                df = pd.DataFrame({'window': [], 'matrix_size': [], 'r': [], 'AICs': [], 'time_vals': [], 'file_paths': []}).set_index(['window', 'matrix_size', 'r'])
+                for f in os.listdir(os.path.join(mp_args.RESULTS_DIR, session, norm_folder, area)):
+                    t = float(f.split('_')[0])
+                    file_path = os.path.join(mp_args.RESULTS_DIR, session, norm_folder, area, f)
+                    df_new = pd.DataFrame(pd.read_pickle(file_path))
+                    if np.isnan(df_new.AIC).sum() > 0:
+                        print(file_path)
+                    df_new = df_new.set_index(['window', 'matrix_size', 'r'])
+                    for i, row in df_new.iterrows():
+                        if i in df.index:
+                            df.loc[i, 'AICs'].append(row.AIC)
+                            df.loc[i, 'time_vals'].append(t)
+                            df.loc[i, 'file_paths'].append(file_path)
+                        else:
+                            df.loc[i] = {'AICs': [row.AIC], 'time_vals': [t], 'file_paths': [file_path]}
 
+                df = df.loc[df.index.sortlevel()[0]]
+                session_results[session][area] = df
+
+            # ================
+            # INDIVIDUAL AREAS
+            # ================ 
             window, matrix_size, r, all_results = combine_grid_results({key: result for key, result in session_results[session].items() if key !='all'})
             logger.debug(f"Session {session} chosen values are:")
             logger.debug(f"window = {window}")
             logger.debug(f"matrix_size = {matrix_size}")
             logger.debug(f"r = {r}")
+            # ================
+            # ALL AREAS
+            # ================ 
+            if 'all' in session_results[session].keys():
+                window_all, matrix_size_all, r_all, all_results_all = combine_grid_results({key: result for key, result in session_results[session].items() if key =='all'})
+                logger.debug(f"Session {session} chosen values for combined areas are:")
+                logger.debug(f"window_all = {window_all}")
+                logger.debug(f"matrix_size_all = {matrix_size_all}")
+                logger.debug(f"r_all = {r_all}")
+                
             mp_args.RESULTS_DIR = os.path.join(os.path.dirname(mp_args.RESULTS_DIR), 'session_results')
-            mp_args.parameter_grid = ParameterGrid(
-                window_vals = np.array([window]),
-                matrix_size_vals = np.array([matrix_size]),
-                r_vals = np.array([r]),
-            )
             mp_args.COMPUTE_CHROOTS = True
-            mp_args.NUM_WORKERS = 4
+            # mp_args.NUM_WORKERS = 4
 
-            stride = window
-            data_processing_rows = []
+    #         areas = data_processing_df_grid.area.unique()
+            
+            # ================
+            # QUEUE A JOB FOR EACH AREA
+            # ================ 
             for area in areas:
-                results_dir = os.path.join(mp_args.RESULTS_DIR, os.path.join(session, 'NORMED' if mp_args.NORM else 'NOT_NORMED', area))
+                data_processing_rows = []
                 if area != 'all':
+                    stride = window
+                    mp_args.parameter_grid = ParameterGrid(
+                        window_vals = np.array([window]),
+                        matrix_size_vals = np.array([matrix_size]),
+                        r_vals = np.array([r]),
+                        reseed=mp_args.parameter_grid.reseed,
+                        reseed_vals=mp_args.parameter_grid.reseed_vals,
+                    )
+                else:
+                    stride = window_all
+                    mp_args.parameter_grid = ParameterGrid(
+                        window_vals = np.array([window_all]),
+                        matrix_size_vals = np.array([matrix_size_all]),
+                        r_vals = np.array([r_all]),
+                        reseed=mp_args.parameter_grid.reseed,
+                        reseed_vals=mp_args.parameter_grid.reseed_vals,
+                    )
+                results_dir = os.path.join(mp_args.RESULTS_DIR, os.path.join(session, 'NORMED' if mp_args.NORM else 'NOT_NORMED', area))
+
+                if area == 'all':
+                    unit_indices = np.arange(len(electrode_info['area']))
+                else:
+                    unit_indices = np.where(electrode_info['area'] == area)[0]
+
+                t = 0
+                while t + window <= len(lfp_schema['index'][0]):
+                    finished = True
+                    file_path = os.path.join(results_dir, f"{int(t)/1000}_window_{window}_{mp_args.parameter_grid.expansion_type}_{matrix_size}")
+                    if not os.path.exists(file_path):
+                        row = dict(
+                            session=session,
+                            area=area,
+                            window_start=t*mp_args.dt,
+                            window_end=(t + window + mp_args.T_pred)*mp_args.dt,
+                            directory=directory,
+                            dimension_inds=unit_indices
+                        )
+                        data_processing_rows.append(row)
+                    t += stride
+                data_processing_df = pd.DataFrame(data_processing_rows)
+                if len(data_processing_df) > 0:
+                    mp_args.data_processing_df = data_processing_df
+                    data_processing_path = os.path.join(os.path.dirname(command_line_args.path), f"mp_args_{session}_FULL{'_NORMED' if mp_args.NORM else ''}_{area}.pkl")
+                    mp_args.QUEUE_FULL_SESSION = False
                     if area == 'all':
-                        unit_indices = np.arange(len(electrode_info['area']))
+                        mp_args.SAVE_JACOBIANS = True
                     else:
-                        unit_indices = np.where(electrode_info['area'] == area)[0]
+                        mp_args.SAVE_JACOBIANS = False
+                    pd.to_pickle(vars(mp_args), data_processing_path)
 
-                    t = 0
-                    while t + window <= len(lfp_schema['index'][0]):
-                        finished = True
-                        file_path = os.path.join(results_dir, f"{int(t)/1000}_window_{window}_{mp_args.parameter_grid.expansion_type}_{matrix_size}")
-                        if not os.path.exists(file_path):
-                            row = dict(
-                                session=session,
-                                area=area,
-                                window_start=t*mp_args.dt,
-                                window_end=(t + window + mp_args.T_pred)*mp_args.dt,
-                                directory=directory,
-                                dimension_inds=unit_indices
-                            )
-                            data_processing_rows.append(row)
-                        t += stride
-            data_processing_df = pd.DataFrame(data_processing_rows)
-            mp_args.data_processing_df = data_processing_df
-            data_processing_path = os.path.join(os.path.dirname(command_line_args.path), f"mp_args_{session}_FULL{'_NORMED' if mp_args.NORM else ''}.pkl")
-            mp_args.QUEUE_FULL_SESSION = False
-            mp_args.NUM_WORKERS = 1
-            pd.to_pickle(vars(mp_args), data_processing_path)
-
-            if not mp_args.USE_CUDA:
-                os.system(f"sbatch --gres=gpu:0 --ntasks=1 --cpus-per-task={int(mp_args.NUM_WORKERS) + 4} --mem={int(mp_args.NUM_WORKERS*8)}GB /om2/user/eisenaj/code/shell_scripts/DeLASE/mp_delase.sh {data_processing_path}")
-            else:
-                os.system(f"sbatch --gres=gpu:{mp_args.NUM_WORKERS} /om2/user/eisenaj/code/shell_scripts/DeLASE/mp_delase.sh {data_processing_path}")
+                    if not mp_args.USE_CUDA:
+                        os.system(f"sbatch --gres=gpu:0 --ntasks=1 --cpus-per-task={int(mp_args.NUM_WORKERS) + 4} --mem={int(mp_args.NUM_WORKERS*8)}GB /om2/user/eisenaj/code/shell_scripts/DeLASE/mp_delase.sh {data_processing_path}")
+                    else:
+                        os.system(f"sbatch --gres=gpu:{mp_args.NUM_WORKERS} /om2/user/eisenaj/code/shell_scripts/DeLASE/mp_delase.sh {data_processing_path}")
 
     logger.info("complete!!!!")

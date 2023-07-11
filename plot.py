@@ -23,8 +23,12 @@ def plot_AIC(results_dict, matrix_size=None, r=None, figsize=(24, 8), title='', 
                 row = results[np.logical_and(results.index.get_level_values('matrix_size') == matrix_size, results.index.get_level_values('r') == r)]
                 if len(row) >= 1:
                     row = row.iloc[0]
-                    AIC[i, j] += np.sum(row.AICs)
-                    counts[i, j] += len(row.AICs)
+                    if 'AICs' in row:
+                        AIC[i, j] += np.sum(row.AICs)
+                        counts[i, j] += len(row.AICs)
+                    else: # 'AIC' in row
+                        AIC[i, j] += row.AIC
+                        counts[i, j] += 1
     AIC[counts == 0] = np.Inf
     counts[counts == 0] = 1
     AIC /= counts
@@ -47,7 +51,7 @@ def plot_AIC(results_dict, matrix_size=None, r=None, figsize=(24, 8), title='', 
     plt.xlabel('rank', fontsize=labelsize)
     ax = plt.gca()
     ax.tick_params(labelsize=tick_param_size)
-    ax.set_title(f'AIC\nmatrix size = {matrix_size_vals[m_index]}, r = {r_vals[r_index]}' if len(title) == 0 else f"{title}\nmatrix size = {matrix_size_vals[m_index]}, r = {r_vals[r_index]}", fontsize=title_size)
+    # ax.set_title(f'AIC\nmatrix size = {matrix_size_vals[m_index]}, r = {r_vals[r_index]}' if len(title) == 0 else f"{title}\nmatrix size = {matrix_size_vals[m_index]}, r = {r_vals[r_index]}", fontsize=title_size)
     ax.scatter(r_index, m_index, c=picked_color, s=marker_size)
     plt.colorbar(ax=ax, label='AIC')
 
