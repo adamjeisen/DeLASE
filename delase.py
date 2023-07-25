@@ -26,6 +26,17 @@ def embed_signal(x, m, tau=1, use_torch=False, device='cpu', dtype='torch.Double
 
     return embedding
 
+def numpy_torch_conversion(x, use_torch, device='cpu', dtype='torch.DoubleTensor'):
+    if use_torch:
+        if isinstance(x, np.ndarray):
+            x = torch.from_numpy(x)
+        x = x.type(dtype).to(device)
+    else:
+        if isinstance(x, torch.Tensor):
+            x = x.cpu().numpy()
+    
+    return x
+
 class DeLASE:
     def __init__(self, data, p=None, matrix_size=None, tau=1, dt=None, svd=True, approx_rank=None, use_torch=False, device=None, dtype='torch.DoubleTensor', verbose=False):
         self.window = data.shape[-2]
