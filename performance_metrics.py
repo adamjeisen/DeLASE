@@ -13,13 +13,12 @@ from utils import *
 # ============================================================
 
 def compute_AIC(delase, test_signal, norm=False):
-    N = (test_signal.shape[0] - delase.p)*test_signal.shape[1]
-    preds = delase.predict_havok_dmd(test_signal, use_real_coords=True)
-    test_signal = numpy_torch_conversion(test_signal, delase.use_torch, delase.device, delase.dtype)
-    if delase.use_torch:
-        AIC = float(N*torch.log(((preds[delase.p:] - test_signal[delase.p:])**2).sum()/N) + 2*(delase.A_v.shape[0]*delase.A_v.shape[1] + 1))
-    else:
-        AIC = float(N*np.log(((preds[delase.p:] - test_signal[delase.p:])**2).sum()/N) + 2*(delase.A_v.shape[0]*delase.A_v.shape[1] + 1))
+    N = (test_signal.shape[0] - delase.n_delays)*test_signal.shape[1]
+    if isinstance(test_signal, np.ndarray):
+        test_signal = torch.from_numpy(test_signal)
+    test_signal = test_signal.to(delase.device)
+    preds = delase.DMD.predict(test_signal)
+    AIC = float(N*torch.log(((preds[delase.n_delays:] - test_signal[delase.n_delays:])**2).sum()/N) + 2*(delase.DMD.A_v.shape[0]*delase.DMD.A_v.shape[1] + 1))
 
     if norm:
         AIC /= N

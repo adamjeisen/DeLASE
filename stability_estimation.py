@@ -30,20 +30,10 @@ def product_safe(x):
 
     return prod
 
-def elle(i, yy, xx, scale=5, sum_vals=False):
+def elle(i, yy, xx):
     xx_trimmed = xx[np.where(xx != xx[i])[0]]
-    # aa = np.product((yy - xx_trimmed)*scale)
-    # bb = np.product((xx[i] - xx_trimmed)*scale)
 
-    # return np.product(np.divide(yy - xx_trimmed, xx[i] - xx_trimmed))
-    if sum_vals:
-        return np.sum(np.divide(yy - xx_trimmed, xx[i] - xx_trimmed))
-    else:
-        return product_safe(np.divide(yy - xx_trimmed, xx[i] - xx_trimmed))
-
-    # if bb == 0:
-    #     bb += 1e-130
-    # return aa/bb
+    return product_safe(np.divide(yy - xx_trimmed, xx[i] - xx_trimmed))
 
 def cheb(N, T):    
     if N == 0:
@@ -59,68 +49,36 @@ def cheb(N, T):
     
     return D, xx
 
-def compute_DDE_chroots(Js, dt, N=20, use_torch=False, device=None, dtype='torch.DoubleTensor', rescale=False, sum_vals=False):
+def compute_DDE_chroots(Js, dt, N=20, use_torch=False, device=None):
     m = Js.shape[1] # system dimension
     
     k = Js.shape[0] # num delays
-    if not rescale:
-        if use_torch:
-            tau = torch.arange(1, Js.shape[0] + 1).to(device)*dt
-        else:
-            tau = np.arange(1, Js.shape[0] + 1)*dt
-    else:
-        if use_torch:
-            tau = torch.arange(1, Js.shape[0] + 1).to(device)/(Js.shape[0] + 1)
-        else:
-            tau = np.arange(1, Js.shape[0] + 1)/(Js.shape[0] + 1)
-    
-    # convert Js to appropriate data type
-    Js = numpy_torch_conversion(Js, use_torch, device, dtype)
+    tau = torch.arange(1, Js.shape[0] + 1).to(device)*dt
 
     L = Js
-    if rescale:
-        L *= dt
     
-    if use_torch:
-        L0 = torch.zeros(Js[0].shape).to(device)
-        T = float(torch.max(tau))
-        AN = torch.zeros(m*(N+1), m*(N+1)).to(device)
-    else:
-        L0 = np.zeros(Js[0].shape)
-        T = np.max(tau)
-        AN = np.zeros((m*(N + 1), m*(N + 1)))
-    
+    L0 = torch.zeros(Js[0].shape).to(device)
+    T = float(torch.max(tau))
+    AN = torch.zeros(m*(N+1), m*(N+1)).to(device)
+
     # faster without torch
     D, xx = cheb(N, T)
-    if use_torch:
-        D = torch.from_numpy(D).to(device)
-        
-    if use_torch:
-        AN[m:, :] = torch.kron(D[1:], torch.eye(m).to(device))
-    else:
-        AN[m:, :] = np.kron(D[1:], np.eye(m))
+    D = torch.from_numpy(D).to(device)
+
+    AN[m:, :] = torch.kron(D[1:], torch.eye(m).to(device))
+
     G_norm = []
     for i in range(N + 1):
         if i == 0:
             G = L0
         else:
-            if use_torch:
-                G = torch.zeros(m, m).to(device)
-            else:
-                G = np.zeros((m, m))
+            G = torch.zeros(m, m).to(device)
 
         for l in range(L.shape[0]):
-            # G += L[:, :, l]*elle(i, - tau[l], xx)
-            # faster without torch
-            # G += L[l]*elle(i, -float(tau[l]), xx, use_torch=False)
-            G += L[l]*elle(i, -float(tau[l]), xx, sum_vals=sum_vals)
-        
-        # G_norm.append(np.linalg.norm(G))
+            G += L[l]*elle(i, -float(tau[l]), xx)
 
         AN[:m, m*i:m*(i + 1)] = G
 
-    if use_torch:
-        eigvals = torch.linalg.eigvals(AN)
-    else:
-        eigvals = np.linalg.eigvals(AN)
+    eigvals = torch.linalg.eigvals(AN)
+
     return eigvals

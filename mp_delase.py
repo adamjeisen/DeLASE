@@ -174,11 +174,11 @@ if __name__ == '__main__':
             num_tasks = int(num_tasks/len(mp_args.parameter_grid.reseed_vals))
     num_tasks *= len(mp_args.data_processing_df)
     
-    if mp_args.parameter_grid.p_vals is not None:
+    if mp_args.parameter_grid.n_delays_vals is not None:
         for i, row in mp_args.data_processing_df.iterrows():
             for window in mp_args.parameter_grid.window_vals:
-                for p in mp_args.parameter_grid.p_vals:
-                    task_queue.put((row[['window_start', 'window_end', 'directory', 'dimension_inds']], window, p, autocorrel_kwargs, fit_and_test_args, mp_args.T_pred, mp_args.RESULTS_DIR, row.session, row.area, mp_args.NORM))
+                for n_delays in mp_args.parameter_grid.n_delays_vals:
+                    task_queue.put((row[['window_start', 'window_end', 'directory', 'dimension_inds']], window, n_delays, autocorrel_kwargs, fit_and_test_args, mp_args.T_pred, mp_args.RESULTS_DIR, row.session, row.area, mp_args.NORM))
     else: # mp_args.parameter_grid.matrix_size_vals is not None
         for i, row in mp_args.data_processing_df.iterrows():
             for window in mp_args.parameter_grid.window_vals:

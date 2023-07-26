@@ -7,22 +7,22 @@ from performance_metrics import compute_AIC, compute_integrated_performance, get
 from utils import *
 
 class ParameterGrid:
-    def __init__(self, window_vals=np.array([10000]), p_vals=None, matrix_size_vals=None, r_vals=None, reseed=False, reseed_vals=np.array([1, 5, 10, 15, 20, 30, 40, 50, 100, 150, 200, 250, 300, 400, 500, 750, 1000])):
+    def __init__(self, window_vals=np.array([10000]), n_delays_vals=None, matrix_size_vals=None, r_vals=None, reseed=False, reseed_vals=np.array([1, 5, 10, 15, 20, 30, 40, 50, 100, 150, 200, 250, 300, 400, 500, 750, 1000])):
         self.window_vals = window_vals
-        if p_vals is not None and matrix_size_vals is not None:
+        if n_delays_vals is not None and matrix_size_vals is not None:
             raise ValueError("p_vals and matrix_size cannot be provided at the same time! Pick one please :)")
-        if p_vals is None and matrix_size_vals is None:
-            matrix_size_vals=np.array([3000])
-        self.p_vals = p_vals
+        if n_delays_vals is None and matrix_size_vals is None:
+            n_delays_vals=np.array([10])
+        self.n_delays_vals = n_delays_vals
         self.matrix_size_vals = matrix_size_vals
         self.r_vals = r_vals
         self.reseed = reseed
         self.reseed_vals = reseed_vals
     
-        if self.p_vals is not None:
-            num_expansions = len(p_vals)
-            self.expansion_type = 'p'
-            self.expansion_vals = p_vals
+        if self.n_delays_vals is not None:
+            num_expansions = len(n_delays_vals)
+            self.expansion_type = 'n_delay'
+            self.expansion_vals = n_delays_vals
         else:
             num_expansions = len(matrix_size_vals)
             self.expansion_type = 'matrix_size'
@@ -46,7 +46,7 @@ def compute_delase_chroots(delase, stability_max_freq=500, stability_max_unstabl
     return result
 
 def fit_and_test_delase(signal, test_signal, window, expansion_val, parameter_grid, dt, norm_aic=True, compute_ip=False, autocorrel_true=None, integrated_performance_kwargs={},
-                        compute_chroots=True, stability_max_freq=500, stability_max_unstable_freq=125, save_jacobians=False, use_torch=False, device='cpu', dtype='torch.DoubleTensor', track_reseeds=False, iterator=None, message_queue=None, worker_num=None, verbose=False):
+                        compute_chroots=True, stability_max_freq=500, stability_max_unstable_freq=125, save_jacobians=False, device='cpu', track_reseeds=False, iterator=None, message_queue=None, worker_num=None, verbose=False):
     results = []
 
     integrated_performance_args = dict(
@@ -65,9 +65,7 @@ def fit_and_test_delase(signal, test_signal, window, expansion_val, parameter_gr
     delase_init_args = {
         parameter_grid.expansion_type: expansion_val,
         'dt': dt,
-        'use_torch': use_torch,
         'device': device,
-        'dtype': dtype
     }
     if verbose:
         if message_queue is not None:
@@ -75,6 +73,8 @@ def fit_and_test_delase(signal, test_signal, window, expansion_val, parameter_gr
         else:
             print("Computing SVD...")
     delase = DeLASE(signal, **delase_init_args)
+    delase.DMD.compute_hankel()
+    delase.DMD.compute_svd()
     if verbose:
         if message_queue is not None:
             message_queue.put((worker_num, "Now running over ranks...", "DEBUG"))
@@ -82,7 +82,7 @@ def fit_and_test_delase(signal, test_signal, window, expansion_val, parameter_gr
             print("SVD computed!")
             print("Now running over ranks...")
     for r in parameter_grid.r_vals:
-        if r <= delase.n*delase.p:
+        if r <= delase.n*delase.n_delays:
             result = {
                 'window': window,
                 parameter_grid.expansion_type: expansion_val,
@@ -102,7 +102,7 @@ def fit_and_test_delase(signal, test_signal, window, expansion_val, parameter_gr
                     message_queue.put((worker_num, f"Computing least squares fit to HAVOK DMD...", "DEBUG"))
                 else:
                     print(f"Computing least squares fit to HAVOK DMD...")
-            delase.compute_havok_dmd(r=r)
+            delase.DMD.compute_havok_dmd(r)
             if verbose:
                 if message_queue is not None:
                     message_queue.put((worker_num, f"HAVOK DMD complete!", "DEBUG"))
@@ -226,8 +226,8 @@ def parameter_search(train_signal, test_signal, parameter_grid=None, dt=1, compu
         signal = train_signal[:window]
         for expansion_val in parameter_grid.expansion_vals:
             if parameter_grid.expansion_type == 'matrix_size':
-                p = int(np.ceil(expansion_val/train_signal.shape[1]))
-            if p*train_signal.shape[1] < window - p:
+                n_delays = int(np.ceil(expansion_val/train_signal.shape[1]))
+            if n_delays*train_signal.shape[1] < window - n_delays:
                 results.extend(fit_and_test_delase(signal, test_signal, window, expansion_val, **fit_and_test_args))
             else:
                 if track_reseeds:
