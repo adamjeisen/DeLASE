@@ -86,7 +86,7 @@ def fit_and_test_delase(signal, test_signal, window, expansion_val, parameter_gr
             result = {
                 'window': window,
                 parameter_grid.expansion_type: expansion_val,
-                'r': r,
+                'rank': r,
             }
             if verbose:
                 if message_queue is not None:

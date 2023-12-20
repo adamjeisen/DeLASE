@@ -30,28 +30,29 @@ def embed_signal_torch(data, n_delays, delay_interval=1):
         The number of time steps between each delay in the delay embedding. Defaults
         to 1 time step.
     """
-    if isinstance(data, np.ndarray):
-        data = torch.from_numpy(data)
-    device = data.device
+    with torch.no_grad():
+        if isinstance(data, np.ndarray):
+            data = torch.from_numpy(data)
+        device = data.device
 
-    # initialize the embedding
-    if data.ndim == 3:
-        embedding = torch.zeros((data.shape[0], data.shape[1] - (n_delays - 1)*delay_interval, data.shape[2]*n_delays)).to(device)
-    else:
-        embedding = torch.zeros((data.shape[0] - (n_delays - 1)*delay_interval, data.shape[1]*n_delays)).to(device)
-    
-    for d in range(n_delays):
-        index = (n_delays - 1 - d)*delay_interval
-        ddelay = d*delay_interval
-
+        # initialize the embedding
         if data.ndim == 3:
-            ddata = d*data.shape[2]
-            embedding[:,:, ddata: ddata + data.shape[2]] = data[:,index:data.shape[1] - ddelay]
+            embedding = torch.zeros((data.shape[0], data.shape[1] - (n_delays - 1)*delay_interval, data.shape[2]*n_delays)).to(device)
         else:
-            ddata = d*data.shape[1]
-            embedding[:, ddata:ddata + data.shape[1]] = data[index:data.shape[0] - ddelay]
-    
-    return embedding
+            embedding = torch.zeros((data.shape[0] - (n_delays - 1)*delay_interval, data.shape[1]*n_delays)).to(device)
+        
+        for d in range(n_delays):
+            index = (n_delays - 1 - d)*delay_interval
+            ddelay = d*delay_interval
+
+            if data.ndim == 3:
+                ddata = d*data.shape[2]
+                embedding[:,:, ddata: ddata + data.shape[2]] = data[:,index:data.shape[1] - ddelay]
+            else:
+                ddata = d*data.shape[1]
+                embedding[:, ddata:ddata + data.shape[1]] = data[index:data.shape[0] - ddelay]
+        
+        return embedding
 
 class DMD:
     """DMD class for computing and predicting with DMD models.
@@ -211,38 +212,38 @@ class DMD:
         """
         Computes the SVD of the Hankel matrix.
         """
+        with torch.no_grad():
+            if self.verbose:
+                print("Computing SVD on Hankel matrix ...")
+            if self.ntrials > 1: #flatten across trials for 3d
+                H = self.H.reshape(self.H.shape[0] * self.H.shape[1], self.H.shape[2])
+            else:
+                H = self.H
+            
+            # compute the SVD
+            U, S, Vh = torch.linalg.svd(H.T, full_matrices=False)
+            
+            # update attributes
+            V = Vh.T
+            self.U = U
+            self.S = S
+            self.V = V
 
-        if self.verbose:
-            print("Computing SVD on Hankel matrix ...")
-        if self.ntrials > 1: #flatten across trials for 3d
-            H = self.H.reshape(self.H.shape[0] * self.H.shape[1], self.H.shape[2])
-        else:
-            H = self.H
-        
-        # compute the SVD
-        U, S, Vh = torch.linalg.svd(H.T, full_matrices=False)
-        
-        # update attributes
-        V = Vh.T
-        self.U = U
-        self.S = S
-        self.V = V
+            # construct the singuar value matrix and its inverse
+            dim = self.n_delays * self.n
+            s = len(S)
+            self.S_mat = torch.zeros(dim, dim).to(self.device)
+            self.S_mat_inv = torch.zeros(dim, dim).to(self.device)
+            self.S_mat[np.arange(s), np.arange(s)] = S
+            self.S_mat_inv[np.arange(s), np.arange(s)] = 1 / S
 
-        # construct the singuar value matrix and its inverse
-        dim = self.n_delays * self.n
-        s = len(S)
-        self.S_mat = torch.zeros(dim, dim).to(self.device)
-        self.S_mat_inv = torch.zeros(dim, dim).to(self.device)
-        self.S_mat[np.arange(s), np.arange(s)] = S
-        self.S_mat_inv[np.arange(s), np.arange(s)] = 1 / S
-
-        # compute explained variance
-        exp_variance_inds = self.S**2 / ((self.S**2).sum())
-        cumulative_explained = torch.cumsum(exp_variance_inds, 0)
-        self.cumulative_explained_variance = cumulative_explained
-        
-        if self.verbose:
-            print("SVD complete!")
+            # compute explained variance
+            exp_variance_inds = self.S**2 / ((self.S**2).sum())
+            cumulative_explained = torch.cumsum(exp_variance_inds, 0)
+            self.cumulative_explained_variance = cumulative_explained
+            
+            if self.verbose:
+                print("SVD complete!")
     
     def compute_havok_dmd(
             self,
@@ -277,61 +278,62 @@ class DMD:
             to override the value of n_delays from the init.
 
         """
-        if self.verbose:
-            print("Computing least squares fits to HAVOK DMD ...")
+        with torch.no_grad():
+            if self.verbose:
+                print("Computing least squares fits to HAVOK DMD ...")
 
-        # if an argument was provided, overwrite the stored rank information
-        none_vars = (rank is None) + (rank_thresh is None) + (rank_explained_variance is None)
-        if none_vars != 3:
-            self.rank = None
-            self.rank_thresh = None
-            self.rank_explained_variance = None
-        
-        self.rank = self.rank if rank is None else rank
-        self.rank_thresh = self.rank_thresh if rank_thresh is None else rank_thresh
-        self.rank_explained_variance = self.rank_explained_variance if rank_explained_variance is None else rank_explained_variance
-        self.lamb = self.lamb if lamb is None else lamb
+            # if an argument was provided, overwrite the stored rank information
+            none_vars = (rank is None) + (rank_thresh is None) + (rank_explained_variance is None)
+            if none_vars != 3:
+                self.rank = None
+                self.rank_thresh = None
+                self.rank_explained_variance = None
+            
+            self.rank = self.rank if rank is None else rank
+            self.rank_thresh = self.rank_thresh if rank_thresh is None else rank_thresh
+            self.rank_explained_variance = self.rank_explained_variance if rank_explained_variance is None else rank_explained_variance
+            self.lamb = self.lamb if lamb is None else lamb
 
-        none_vars = (self.rank is None) + (self.rank_thresh is None) + (self.rank_explained_variance is None)
-        if none_vars < 2:
-            raise ValueError("More than one value was provided between rank, rank_thresh, and rank_explained_variance. Please provide only one of these, and ensure the others are None!")
-        elif none_vars == 3:
-           self.rank = len(self.S)
-        
-        if rank_thresh is not None:
-            if self.S[-1] > rank_thresh:
+            none_vars = (self.rank is None) + (self.rank_thresh is None) + (self.rank_explained_variance is None)
+            if none_vars < 2:
+                raise ValueError("More than one value was provided between rank, rank_thresh, and rank_explained_variance. Please provide only one of these, and ensure the others are None!")
+            elif none_vars == 3:
                 self.rank = len(self.S)
+            
+            if rank_thresh is not None:
+                if self.S[-1] > rank_thresh:
+                    self.rank = len(self.S)
+                else:
+                    self.rank = torch.argmax(torch.arange(len(self.S), 0, -1).to(self.device)*(self.S < rank_thresh))
+
+            if rank_explained_variance is not None:
+                self.rank = int(torch.argmax((self.cumulative_explained_variance > rank_explained_variance).type(torch.int)).cpu().numpy())
+
+            if self.rank > self.H.shape[-1]:
+                self.rank = self.H.shape[-1]
+
+            # reshape for leastsquares
+            if self.ntrials > 1:
+                V = self.V.reshape(self.H.shape)
+                #first reshape back into Hankel shape, separated by trials
+                newshape = (self.H.shape[0]*(self.H.shape[1]-1),self.H.shape[2])
+                Vt_minus = V[:,:-1].reshape(newshape)
+                Vt_plus = V[:,1:].reshape(newshape)
             else:
-                self.rank = torch.argmax(torch.arange(len(self.S), 0, -1).to(self.device)*(self.S < rank_thresh))
+                Vt_minus = self.V[:-1]
+                Vt_plus = self.V[1:]
 
-        if rank_explained_variance is not None:
-            self.rank = int(torch.argmax((self.cumulative_explained_variance > rank_explained_variance).type(torch.int)).cpu().numpy())
+            if self.rank is None:
+                if self.S[-1] > self.rank_thresh:
+                    self.rank = len(self.S)
+                else:
+                    self.rank = torch.argmax(torch.arange(len(self.S), 0, -1).to(self.device)*(self.S < self.rank_thresh))
+            A_v = (torch.linalg.inv(Vt_minus[:, :self.rank].T @ Vt_minus[:, :self.rank] + self.lamb*torch.eye(self.rank).to(self.device))@ Vt_minus[:, :self.rank].T@ Vt_plus[:, :self.rank]).T
+            self.A_v = A_v
+            self.A_havok_dmd = self.U @ self.S_mat[:self.U.shape[1], :self.rank] @ self.A_v @ self.S_mat_inv[:self.rank, :self.U.shape[1]] @ self.U.T
 
-        if self.rank > self.H.shape[-1]:
-            self.rank = self.H.shape[-1]
-
-        # reshape for leastsquares
-        if self.ntrials > 1:
-            V = self.V.reshape(self.H.shape)
-            #first reshape back into Hankel shape, separated by trials
-            newshape = (self.H.shape[0]*(self.H.shape[1]-1),self.H.shape[2])
-            Vt_minus = V[:,:-1].reshape(newshape)
-            Vt_plus = V[:,1:].reshape(newshape)
-        else:
-            Vt_minus = self.V[:-1]
-            Vt_plus = self.V[1:]
-
-        if self.rank is None:
-            if self.S[-1] > self.rank_thresh:
-                self.rank = len(self.S)
-            else:
-                self.rank = torch.argmax(torch.arange(len(self.S), 0, -1).to(self.device)*(self.S < self.rank_thresh))
-        A_v = (torch.linalg.inv(Vt_minus[:, :self.rank].T @ Vt_minus[:, :self.rank] + self.lamb*torch.eye(self.rank).to(self.device))@ Vt_minus[:, :self.rank].T@ Vt_plus[:, :self.rank]).T
-        self.A_v = A_v
-        self.A_havok_dmd = self.U @ self.S_mat[:self.U.shape[1], :self.rank] @ self.A_v @ self.S_mat_inv[:self.rank, :self.U.shape[1]] @ self.U.T
-
-        if self.verbose:
-            print("Least squares complete! \n")
+            if self.verbose:
+                print("Least squares complete! \n")
 
     def fit(
             self,
@@ -445,6 +447,7 @@ class DMD:
             return pred_data
     
     def to(self, device):
+        self.device = device
         if self.data is not None:
             self.data = self.data.to(device)
         if self.H is not None:
