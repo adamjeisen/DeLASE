@@ -33,6 +33,7 @@ class DeLASE:
             self.n_delays = n_delays
             self.matrix_size = self.n*self.n_delays
 
+        self.delay_interval = delay_interval
         self.dt = dt
         self.N_time_bins = N_time_bins
         self.max_freq = max_freq
@@ -125,7 +126,7 @@ class DeLASE:
             N_time_bins = self.n_delays
         self.N_time_bins = N_time_bins
 
-        chroots = compute_DDE_chroots(self.Js, self.dt, N=N_time_bins, device=self.device)
+        chroots = compute_DDE_chroots(self.Js, self.dt*self.delay_interval, N=N_time_bins, device=self.device)
 
         if isinstance(chroots, np.ndarray):
             chroots = torch.from_numpy(chroots).to(self.device)
