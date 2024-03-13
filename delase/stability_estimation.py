@@ -10,8 +10,6 @@ import numpy as np
 import numpy.matlib as matlib
 import torch
 
-from utils import *
-
 # -----------------------------------
 # STABILITY ESTIMATION
 # -----------------------------------

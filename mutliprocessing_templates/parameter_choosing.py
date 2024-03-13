@@ -3,8 +3,8 @@ import pandas as pd
 from tqdm.auto import tqdm
 
 from delase import DeLASE
-from performance_metrics import compute_AIC, compute_integrated_performance, get_autocorrel_funcs
-from utils import *
+from DeLASE.metrics import compute_AIC, compute_integrated_performance, get_autocorrel_funcs
+# from utils import *
 
 class ParameterGrid:
     def __init__(self, window_vals=np.array([10000]), n_delays_vals=None, matrix_size_vals=None, r_vals=None, reseed=False, reseed_vals=np.array([1, 5, 10, 15, 20, 30, 40, 50, 100, 150, 200, 250, 300, 400, 500, 750, 1000])):
@@ -188,8 +188,8 @@ def parameter_search(train_signal, test_signal, parameter_grid=None, dt=1, compu
     if parameter_grid is None:
         parameter_grid = ParameterGrid()
     
-    train_signal = numpy_torch_conversion(train_signal, use_torch, device, dtype)
-    test_signal = numpy_torch_conversion(test_signal, use_torch, device, dtype)
+    # train_signal = numpy_torch_conversion(train_signal, use_torch, device, dtype)
+    # test_signal = numpy_torch_conversion(test_signal, use_torch, device, dtype)
     if use_torch:
         device = train_signal.device
 
@@ -368,8 +368,8 @@ def parameter_searchIP(train_signal, test_signal, parameter_grid=None, dt=1, com
     if parameter_grid is None:
         parameter_grid = ParameterGrid()
     
-    train_signal = numpy_torch_conversion(train_signal, use_torch, device)
-    test_signal = numpy_torch_conversion(test_signal, use_torch, device)
+    # train_signal = numpy_torch_conversion(train_signal, use_torch, device)
+    # test_signal = numpy_torch_conversion(test_signal, use_torch, device)
     if use_torch:
         device = train_signal.device
 

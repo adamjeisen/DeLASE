@@ -1,8 +1,8 @@
-from dmd import DMD
+from .dmd import DMD
 import numpy as np
 import torch
 
-from stability_estimation import compute_DDE_chroots
+from .stability_estimation import compute_DDE_chroots
 
 class DeLASE:
     def __init__(
