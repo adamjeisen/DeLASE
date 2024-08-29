@@ -13,6 +13,6 @@ Please don't hestiate to reach out with any questions.
 ```
 git clone https://github.com/adamjeisen/DeLASE
 cd DeLASE/
-pip install -e .
+python -m pip install --editable .
 ```
 

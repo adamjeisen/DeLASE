@@ -86,7 +86,6 @@ class DeLASE:
             max_freq=None,
             max_unstable_freq=None
         ):
-        print(max_freq, max_unstable_freq)
         self.max_freq = self.max_freq if max_freq is None else max_freq
         self.max_unstable_freq = self.max_unstable_freq if max_unstable_freq is None else max_unstable_freq
         stability_params = torch.real(self.chroots)

@@ -2,7 +2,7 @@
 
 from distutils.core import setup
 
-setup(name='DeLASE',
+setup(name='delase',
       version='1.0',
       description='Delayed Linear Analysis for Stability Estimation (DeLASE)',
       author='Adam Eisen',
