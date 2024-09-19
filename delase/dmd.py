@@ -436,7 +436,8 @@ class DMD:
                 H_test_havok_dmd[:, t] = (A @ H_test[:, t - 1].transpose(-2, -1)).transpose(-2, -1)
             else:
                 H_test_havok_dmd[:, t] = (A @ H_test_havok_dmd[:, t - 1].transpose(-2, -1)).transpose(-2, -1)
-        pred_data = torch.hstack([test_data[:, :(self.n_delays - 1)*self.delay_interval + 1], H_test_havok_dmd[:, 1:, :self.n]])
+
+        pred_data = torch.hstack([test_data[...,:(self.n_delays - 1)*self.delay_interval + 1, :], H_test_havok_dmd[...,1:, :self.n]])
 
         if ndim == 2:
             pred_data = pred_data[0]

@@ -528,3 +528,12 @@ class Rossler(DynSys):
         result[1, :] = [1, a, 0]
         result[2, :] = [z, 0, x - c]
         return result
+
+class RNNChaotic(DynSys):
+    @staticjit
+    def _rhs(x, t, W, tau):
+        return (1/tau)*(-x + W @ np.tanh(x))
+    
+    @staticjit
+    def _jac(x, t, W, tau):
+        return (1/tau)*(-np.eye(W.shape[-1]).astype(W.dtype) + W @ np.diag(1 - np.tanh(x)**2).astype(W.dtype))

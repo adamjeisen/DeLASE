@@ -1,4 +1,5 @@
 import numpy as np
+from scipy.spatial.distance import cdist
 import torch
 from tqdm.auto import tqdm
 
@@ -84,3 +85,76 @@ def compute_lyaps_and_jacobians(x, W, g, tau, dt, N, k=None, use_torch=False, de
         lexp_counts[idx] += 1
     
     return np.divide(lexp, lexp_counts)*(1/dt)
+
+def local_covariance(points, dist_matrix, r, i):
+    """
+    Compute the local covariance matrix for points within a distance r using precomputed distances.
+
+    Parameters:
+    points (numpy.ndarray): Array of shape (T, N) where T is the number of observations and N is the number of observables.
+    dist_matrix (numpy.ndarray): Precomputed pairwise distance matrix of shape (T, T).
+    r (float): Distance threshold for neighborhood.
+    i (int): Index of the current point for which to compute the local covariance matrix.
+
+    Returns:
+    numpy.ndarray: Local covariance matrix.
+    """
+    # Select points within distance r
+    neighbors = points[dist_matrix[i] < r]
+
+    if len(neighbors) > 1:  # Need at least 2 points to compute covariance
+        return np.cov(neighbors, rowvar=False)
+    else:
+        return None
+
+def participation_ratio(cov_matrix):
+    """
+    Compute the participation ratio from a covariance matrix.
+
+    Parameters:
+    cov_matrix (numpy.ndarray): Covariance matrix.
+
+    Returns:
+    float: The participation ratio.
+    """
+    # print(np.linalg.det(cov_matrix))
+    # if cov_matrix is None or np.linalg.det(cov_matrix) == 0:
+    #     return None  # Undefined for singular matrix
+
+    eigenvalues = np.linalg.eigvalsh(cov_matrix)
+    sum_lambda = np.sum(eigenvalues)
+    sum_lambda_squared = np.sum(eigenvalues ** 2)
+
+    if sum_lambda_squared == 0:
+        return None  # Undefined if all eigenvalues are zero
+
+    pr = (sum_lambda ** 2) / sum_lambda_squared
+    return pr
+
+def D_PR(points, r, dist_matrix=None,verbose=False):
+    """
+    Compute the scale-dependent participation ratio D_PR(r).
+
+    Parameters:
+    points (numpy.ndarray): Array of shape (T, N) where T is the number of observations and N is the number of observables.
+    r (float): Distance threshold for neighborhood.
+
+    Returns:
+    float: The averaged participation ratio over all points.
+    """
+    T = points.shape[0]
+    
+    # Precompute the pairwise distance matrix
+    if dist_matrix is None:
+        dist_matrix = cdist(points, points)
+
+    participation_ratios = []
+
+    for i in tqdm(range(T), disable=not verbose):
+        local_cov = local_covariance(points, dist_matrix, r, i)
+        if local_cov is not None:
+            pr = participation_ratio(local_cov)
+            if pr is not None:
+                participation_ratios.append(pr)
+
+    return np.mean(participation_ratios) if participation_ratios else None
