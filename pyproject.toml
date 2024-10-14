@@ -5,6 +5,10 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "delase"
 version = "1.0"
+description = "Delayed Linear Analysis for Stability Estimation (DeLASE)"
+authors = [
+  {name = "Adam J. Eisen", email = "eisenaj@mit.edu" }
+]
 
 [tool.setuptools.packages.find]
 where = ["."]

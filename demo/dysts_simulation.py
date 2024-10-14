@@ -537,3 +537,12 @@ class RNNChaotic(DynSys):
     @staticjit
     def _jac(x, t, W, tau):
         return (1/tau)*(-np.eye(W.shape[-1]).astype(W.dtype) + W @ np.diag(1 - np.tanh(x)**2).astype(W.dtype))
+    
+class RNNOscillator(DynSys):
+    @staticjit
+    def _rhs(x, t, W, tau):
+        return (1/tau)*(-x + W @ np.tanh(x))
+    
+    @staticjit
+    def _jac(x, t, W, tau):
+        return (1/tau)*(-np.eye(W.shape[-1]).astype(W.dtype) + W @ np.diag(1 - np.tanh(x)**2).astype(W.dtype))
