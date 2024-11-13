@@ -1,5 +1,5 @@
 # DeLASE: Delayed Linear Analysis for Stability Estimation
-## A data-driven tool for robustly and rigorously quantifying stability in complex partially-observed nonlinear dynamical systems.
+## A data-driven tool for robustly and rigorously quantifying changes in stability in complex partially-observed nonlinear dynamical systems.
 
 This repository contains code for running the DeLASE algorithm (Delayed Linear Analysis for Stability Estimation). DeLASE was designed to quantify changes in population-level stability in complex systems. DeLASE harnesses the power of Koopman operators (namely, the HAVOK algorithm<sup>1</sup>) to efficiently generate linear representations of nonlinear partially-observed dynamics. DeLASE then reformulates the Koopman operator as a delay dynamical system, and utilizes tools (namely, the TRACE-DDE algorithm) from delay differential equations theory for estimating the stability of such equations<sup>2</sup>.
 
