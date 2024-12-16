@@ -35,6 +35,45 @@ def compute_lyaps(Js, dt=1, k=None, verbose=False):
     
     return np.sort(np.divide(lexp, lexp_counts)*(1/dt))[::-1]
 
+def compute_lyapunov_spectrum(jacobians, dt):
+    """
+    Computes the full Lyapunov spectrum using the QR method.
+
+    Parameters:
+        jacobians (list of np.ndarray): Sequence of Jacobian matrices.
+        num_iterations (int): Number of iterations to compute the Lyapunov spectrum.
+        dt (float): Time step between successive Jacobians.
+
+    Returns:
+        np.ndarray: The Lyapunov spectrum (array of exponents).
+    """
+    # Dimension of the system
+    dim = jacobians[0].shape[0]
+    num_iterations = len(jacobians)
+
+    # Initialize a random orthonormal matrix Q
+    Q = np.eye(dim)
+    np.random.seed(0)  # For reproducibility
+    Q = np.linalg.qr(np.random.randn(dim, dim))[0]
+
+    # To store the cumulative logarithm of the stretching factors
+    log_stretching_factors = np.zeros(dim)
+
+    for i in range(num_iterations):
+        # Multiply the current Jacobian by Q
+        Z = jacobians[i % len(jacobians)] @ Q
+
+        # Perform QR decomposition on Z
+        Q, R = np.linalg.qr(Z)
+
+        # Logarithm of the diagonal entries of R gives the stretching factors
+        log_stretching_factors += np.log(np.abs(np.diag(R)))
+
+    # Compute the mean logarithmic stretching factor for each exponent
+    lyapunov_spectrum = (log_stretching_factors / num_iterations) / dt
+
+    return lyapunov_spectrum
+
 def rnn(t, x, W, tau, g):
     return (1/tau)*(-x + g*W @ np.tanh(x))
 

@@ -271,38 +271,28 @@ class DynSys(BaseDyn):
 
     def rhs(self, X, t):
         """The right hand side of a dynamical equation"""
-        param_list = [
-            self.params[key] for key in self.params
-        ]
         if self.vectorize:
-            out = self._rhs(X.T, t, *param_list)
+            out = self._rhs(X.T, t, **self.params)
         else:
-            out = self._rhs(*X.T, t, *param_list)
+            out = self._rhs(*X.T, t, **self.params)
         return out
     
     # AE writing this
     def jac(self, X, t, length=None):
         """The Jacobian of the dynamical equation"""
-        param_list =[
-            getattr(self, param_name) for param_name in self.get_param_names()
-        ]
-        # param_dict = {
-        #     param_name: getattr(self, param_name) for param_name in self.get_param_names()
-        # }
         if len(X.shape) == 1:
             if self.vectorize:
-                out = np.array(self._jac(X, t, *param_list))
+                out = np.array(self._jac(X, t, **self.params))
                 # out = np.array(self._jac(X, t, **param_dict))
             else:
-                out = np.array(self._jac(*X, t, *np.array(param_list)))
-                # out = np.array(self._jac(*X, t, **param_dict))
+                out = np.array(self._jac(*X, t, **self.params))
         elif len(X.shape) == 3:
             if length is None:
                 length = X.shape[1]
             out = np.zeros((X.shape[0], length, X.shape[2], X.shape[2]))
             for i in range(X.shape[0]):
                 for j, _t in enumerate(t):
-                    out[i, j] = self.jac(X[i, j], _t)
+                    out[i, j] = self.jac(X[i, j], _t, **self.params)
         else:
             raise NotImplementedError("Shapes other than (D,) or (B, T, D) not supported")
         return out
@@ -431,6 +421,19 @@ class DynSys(BaseDyn):
         else:
             return sol
         
+# class VanDerPol(DynSys):
+#     @staticjit
+#     def _rhs(x, y, t, mu, gamma):
+#         xdot = y
+#         ydot = mu * (1 - x ** 2) * y - x - gamma * y
+#         return xdot, ydot
+
+#     @staticjit
+#     def _jac(x, y, t, mu, gamma):
+#         row1 = [0, 1]
+#         row2 = [-2 * mu * x * y - 1, mu * (1 - x ** 2) - gamma]
+#         return np.array([row1, row2])
+
 class VanDerPol(DynSys):
     @staticjit
     def _rhs(x, y, t, mu, gamma):
@@ -440,9 +443,11 @@ class VanDerPol(DynSys):
 
     @staticjit
     def _jac(x, y, t, mu, gamma):
-        row1 = [0, 1]
-        row2 = [-2 * mu * x * y - 1, mu * (1 - x ** 2) - gamma]
-        return [row1, row2]
+        # Return a 2x2 numpy array instead of nested lists
+        return np.array([
+            [0.0, 1.0],
+            [-2.0 * mu * x * y - 1.0, mu * (1.0 - x ** 2) - gamma]
+        ])
     
 class Rossler(DynSys):
     @staticjit
@@ -459,3 +464,20 @@ class Rossler(DynSys):
         result[1, :] = [1, a, 0]
         result[2, :] = [z, 0, x - c]
         return result
+
+class Lorenz(DynSys):
+    @staticjit
+    def _rhs(x, y, z, t, beta, rho, sigma):
+        xdot = sigma * (y - x)
+        ydot = rho * x - x * z - y 
+        zdot = x * y - beta * z
+        return np.array([xdot, ydot, zdot])
+
+    @staticjit
+    def _jac(x, y, z, t, beta, rho, sigma):
+        # Return a numpy array with float64 dtype to ensure consistent types
+        return np.array([
+            [-sigma, sigma, 0.0],
+            [rho - z, -1.0, -x],
+            [y, x, -beta]
+        ], dtype=np.float64)
